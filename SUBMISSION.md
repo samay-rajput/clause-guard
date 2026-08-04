@@ -14,14 +14,19 @@ while the live portal was down) and
 flags the clause-level conflicts a drafting officer would otherwise miss. Retrieval
 narrows thousands of clauses to ~30 candidates; a fine-tuned MuRIL cross-encoder
 (238M, 130 ms/pair on CPU — no API, no rate limits) screens them to a handful; an LLM
-then only *extracts* the competing values ("50 टक्के" vs "100 टक्के") and deterministic
-code makes the conflict call — every flag ships with an auditable reason. The same app
-generates compliant bilingual drafts (deterministic Manual-template scaffold + a
-digit-audited local-LLM layer), links and currency-checks every citation, scores
-Manual-of-Office-Procedure compliance (0%→100% live), bundles a Marathi↔English legal
-glossary, keeps an audit trail of every suggestion and human edit, and exports the
-draft and review report as DOCX/PDF with correctly-shaped Devanagari. It runs fully
-offline on a laptop GPU.
+then only *extracts* the competing values ("50 टक्के" vs "100 टक्के") — grounded
+against the clauses they came from — and deterministic code makes the conflict call:
+every flag ships with an auditable reason. Type a topic and the same app drafts the
+whole GR: real precedent GRs seed the department, वाचा references and file number in
+the portal's own grammars; an AI layer proposes the prose under a *sourced-or-blank*
+rail (no numeral the user didn't see — unknowns become blanks with open questions);
+the generated draft is conflict-checked immediately, with one-click deterministic
+fixes; and the download reproduces the authentic government GR layout page-for-page
+(calibrated against a real portal GR, Devanagari numerals, running headers, `पृष्ठ N
+पैकी n` footers), named `<18-digit code>.pdf` like the portal's own files. It also
+links and currency-checks every citation, scores Manual-of-Office-Procedure compliance
+(0%→100% live), bundles a Marathi↔English legal glossary, and keeps an audit trail of
+every suggestion and human edit. It runs fully offline on a laptop GPU.
 
 ## What makes it defensible
 

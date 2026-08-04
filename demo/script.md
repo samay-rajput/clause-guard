@@ -30,3 +30,29 @@
       BEFORE recording so the LLM response is cached and the take is instant
 - [ ] Audit tab shows the Scenario A → fixed-draft diff (run A, then the fixed version,
       before recording); delete `data/audit_trail.jsonl` first for a clean trail
+
+## Round 2 — live drafting-system demo (~3 min, localhost)
+
+The shortlisting round asked for a full drafting system: topic in → best-format,
+conflict-checked GR out, with a download indistinguishable from a real government GR.
+
+| Beat | Do | Say |
+|------|----|-----|
+| 1. Topic | Generate tab (मराठी default). Type a topic, e.g. "जिल्हा परिषद शाळांमधील विद्यार्थ्यांसाठी मोफत क्रीडा साहित्य पुरवठा" → **🔎 पूर्वसंदर्भ शोधा व फॉर्म भरा** | "Type a topic. ClauseGuard searches the real corpus, finds precedent GRs, and infers the department from their codes — the only garble-proof key." |
+| 2. Prefill | Point at the precedent cards (similarity + source links), the prefilled वाचा (portal citation grammar), the file number, the ❓ needs-numbers questions | "The references are built in the portal's own citation grammar — the reference checker links them automatically. And the trust rule: the AI can propose prose, but every number must trace to a source; anything it can't source becomes a blank it asks you to fill. No hallucinated amounts, by construction." |
+| 3. Generate & check | Review/edit a field, then **✍️ मसुदा तयार करा व तपासा** | "The final draft is rendered deterministically from the form you approved — a digit audit proves no numeral appears that you didn't see — and it goes straight through the same conflict, citation, compliance and terminology review as any draft." |
+| 4. Conflict + fix | If a conflict card appears: value chips, then **🔧 दुरुस्ती लागू करा** → **🔁 पुन्हा तपासा** | "A verified conflict against an in-force GR — with the two values extracted and compared in code. One click aligns the draft to the in-force value, regenerates through the audit, and re-checks." |
+| 5. Authentic export | Export expander → **📜 अस्सल शासकीय स्वरूप · PDF** → open it SIDE BY SIDE with `data/raw_pdfs/202402271742452721.pdf` | "The download is the real thing: US-Letter, the top-right subject block, the centred letterhead, hanging वाचा and प्रत lists, Devanagari numerals everywhere, running header and 'पृष्ठ N पैकी n' footers on page two — calibrated span-by-span against an actual portal GR, and named by its 18-digit code exactly like the portal's own files." |
+| 6. Trail | Audit tab: the generate+review record | "Every generation and every fix is on the record." |
+
+### Round-2 rehearsal checklist
+- [ ] **Ollama is NOT auto-started on this machine** — run `ollama list` once (it
+      boots the app) BEFORE the demo; `.env` has `LLM_MODE=ollama`
+- [ ] Pre-run the EXACT demo topic once (prefill + generate & check) so every LLM
+      response is disk-cached and the live run is instant
+- [ ] Have `data/raw_pdfs/202402271742452721.pdf` open in a tab for the side-by-side
+- [ ] If a fix-loop beat is planned, rehearse the topic first: pick one whose conflict
+      candidate carries a single value (a two-valued candidate clause can re-flag with
+      the 8B extractor — honest to explain, but smoother to avoid)
+- [ ] Gates before the session: `python src/detect/warm_cache.py` (A:1/B:0/C1:0/C2:2),
+      `python tests/test_gr_layout.py`, `python tests/apptest_topic_flow.py`

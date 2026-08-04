@@ -18,15 +18,31 @@ Drafts and reviews Maharashtra GRs against a corpus of real ones:
    conventions (header, Read block, preamble, numbered clauses, financial-sanction block,
    budget head, signature formula, code).
 4. **Bilingual terminology** — Marathi ↔ English legal/administrative glossary.
-5. **Drafting assistance** — a deterministic template scaffold guarantees every mandatory
-   section in both languages; an optional AI layer (local Ollama in ollama mode — the
-   brief never leaves the machine) expands an officer's brief into the preamble and
-   clauses, digit-audited so no numeral is invented or dropped.
-6. **Audit trail** — every review and generation appends to a local JSONL: the
+5. **Topic-driven drafting studio** — type a topic and ClauseGuard retrieves real
+   precedent GRs from the corpus, infers the issuing department from their 18-digit
+   codes, builds the वाचा reference list in the portal's own citation grammar, proposes
+   a file number in the real `<प्रत्यय>-<वर्ष>/प्र.क्र.<n>/<कार्यासन>` grammar, and prefills
+   the whole form. An AI layer proposes the prose under a *sourced-or-blank* rail:
+   every number it emits must trace to the topic or a shown precedent, anything else
+   becomes a `____` blank the user must fill (with the open questions listed). The
+   final draft is rendered deterministically from the reviewed form and a digit audit
+   proves no numeral appears that the user did not approve. The classic
+   brief-expansion path (digit-audited both ways) remains.
+6. **Draft-time conflict checking** — a generated draft goes straight through the full
+   conflict/reference/compliance/glossary review; verified conflicts appear inline
+   with a one-click deterministic fix (substitute the in-force value, regenerate
+   through the audit, re-check). Extracted numeric values must be *grounded* in the
+   clause they came from — a hallucinated number can never flag a conflict.
+7. **Audit trail** — every review and generation appends to a local JSONL: the
    suggestions offered, the deterministic results, and a unified diff of the officer's
    edits between submissions.
-7. **Export** — the draft and the review report as DOCX (Nirmala UI) or PDF (embedded
-   Noto fonts with harfbuzz shaping, so Marathi conjuncts render correctly).
+8. **Authentic-format export** — the draft downloads as a PDF/DOCX that reproduces the
+   real Government-of-Maharashtra GR layout, calibrated span-by-span against an actual
+   portal GR (US-Letter geometry, top-right bold subject block, centred letterhead,
+   hanging वाचा/प्रत lists, justified body, running header with the thin-over-thick
+   rule and `पृष्ठ N पैकी n` footers on continuation pages, Devanagari numerals
+   throughout, clickable `www.maharashtra.gov.in`), named `<18-digit code>.pdf` like
+   the portal's own files. Plain DOCX/PDF and the review report remain available.
 
 ## Corpus note
 
