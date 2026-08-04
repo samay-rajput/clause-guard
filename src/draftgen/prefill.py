@@ -20,6 +20,8 @@ every numeral it emits must trace to a shown source or it is scrubbed to a
 "____" blank the user must fill (see scrub_unsourced_digits).
 """
 import hashlib
+import json
+import os
 import re
 import sys
 from datetime import date as date_cls
@@ -27,7 +29,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "src" / "draftgen"))
-from generate import SAMPLE, financial_year, unique_code  # noqa: E402
+sys.path.append(str(ROOT / "src" / "llm"))
+from generate import SAMPLE, _digit_runs, financial_year, unique_code  # noqa: E402
+from clients import LLMError, llm_with_fallback  # noqa: E402
 
 MAX_TOPIC_DISTANCE = 0.30      # topic queries sit farther out than clause pairs
 DEFAULT_DEPT = "08"
@@ -181,12 +185,16 @@ def build_references(precedents: list, lang: str) -> list:
     return refs
 
 
-def propose_gr_number(dept: dict, lang: str, on_date: date_cls, topic: str) -> str:
-    """<प्रत्यय>-<वर्ष>/प्र.क्र.<n>/<कार्यासन> with a stable per-topic serial."""
+def propose_gr_number(dept: dict, lang: str, on_date: date_cls, topic: str,
+                      prefix: str = None) -> str:
+    """<प्रत्यय>-<वर्ष>/प्र.क्र.<n>/<कार्यासन> with a stable per-topic serial. An AI-
+    proposed prefix is used only when it validates against the real grammar."""
     n = int(hashlib.sha256(topic.encode("utf-8")).hexdigest(), 16) % 199 + 1
+    if not (prefix and re.fullmatch(r"[ऀ-ॿA-Za-z]{2,8}", prefix)):
+        prefix = dept["file_prefix"][lang]
     if lang == "mr":
-        return f"{dept['file_prefix']['mr']}-{on_date.year}/प्र.क्र.{n}/{dept['desk']['mr']}"
-    return f"{dept['file_prefix']['en']}-{on_date.year}/C.R.{n}/{dept['desk']['en']}"
+        return f"{prefix}-{on_date.year}/प्र.क्र.{n}/{dept['desk']['mr']}"
+    return f"{prefix}-{on_date.year}/C.R.{n}/{dept['desk']['en']}"
 
 
 def _subject_line(topic: str, lang: str) -> str:
@@ -239,15 +247,148 @@ def deterministic_prefill(topic: str, lang: str = "mr", corpus=None,
     }
 
 
+# ---------- AI prose layer (sourced-or-blank rail) ----------
+
+AI_PROMPT = {
+    "mr": """तुम्ही महाराष्ट्र शासनाच्या शासन निर्णयाचा (GR) फॉर्म भरत आहात.
+विषय (वापरकर्त्याने दिलेला): {topic}
+
+संदर्भ म्हणून खालील खऱ्या शासन निर्णयांचे विषय दिले आहेत — त्यांतील मजकुरात
+OCR-दोष असू शकतो; तुम्ही मात्र शुद्ध प्रमाण मराठीत लिहा:
+{precedent_lines}
+
+फक्त JSON परत करा, keys:
+- "subject": विषय-ओळ, शेवट "बाबत." असा
+- "file_prefix": फाईल क्रमांकासाठी 2-6 अक्षरी संक्षेप (उदा. शिष्यवृ, सादिल)
+- "background": प्रस्तावनेचा एक औपचारिक परिच्छेद, शेवट "ही बाब शासनाच्या
+  विचाराधीन होती." असा
+- "clauses": बरोबर {n} कार्यवाहीचे मुद्दे (array of strings; क्रमांक लिहू नका;
+  प्रत्येक मुद्दा 15-30 शब्दांचा, शासकीय शैलीत, पाल्हाळ नको)
+- "needs_numbers": ज्या रकमा/दिनांक/टक्केवारी तुम्हाला माहीत नाहीत त्यांबद्दलचे
+  प्रश्न (array of strings, कमाल 5)
+रक्कम/दिनांक माहीत नसल्यास मजकुरात "____" वापरा. विषयात किंवा वरील संदर्भांत
+नसलेली कोणतीही संख्या स्वतः लिहू नका. JSON पूर्ण करा — मध्येच थांबू नका.""",
+    "en": """You are filling the form for a Maharashtra Government Resolution (GR).
+Topic (from the user): {topic}
+
+Subjects of real precedent GRs are given below for reference — their text may
+carry OCR damage; you must write clean formal English:
+{precedent_lines}
+
+Return ONLY JSON with keys:
+- "subject": the subject line, ending with a full stop
+- "file_prefix": a 2-6 letter file-number abbreviation (e.g. TEM, SCH)
+- "background": ONE formal Preamble paragraph ending with the convention that
+  the matter "was under consideration of the Government."
+- "clauses": exactly {n} operative clauses (array of strings; no numbering
+  inside the strings; each 15-30 words, imperative government style, concise)
+- "needs_numbers": questions about any amounts/dates/percentages you do not
+  know (array of strings, max 5)
+Use "____" in the text wherever an amount or date is unknown. Do not invent
+any number that is not in the topic or the precedents above. Complete the
+JSON — never stop midway.""",
+}
+
+_DIGIT_RUN_RE = re.compile(r"[0-9०-९][0-9०-९,]*")
+
+
+def scrub_unsourced_digits(text: str, allowed: set) -> tuple:
+    """Replace every digit run whose normalised form is not in `allowed` with
+    a ____ blank. Returns (scrubbed_text, [removed runs]). This is the prefill
+    rail: every number the user sees is sourced or blank."""
+    removed = []
+
+    def sub(m):
+        runs = _digit_runs(m.group(0))
+        if runs and not runs <= allowed:
+            removed.append(m.group(0))
+            return "____"
+        return m.group(0)
+
+    return _DIGIT_RUN_RE.sub(sub, text or ""), removed
+
+
+def ai_prefill(topic: str, lang: str, precedents: list, n_clauses: int = 3,
+               llm_fn=None) -> dict:
+    """One LLM call proposing PROSE only: subject, file prefix, background,
+    clauses, and the open questions. Raises LLMError on failure; the caller
+    scrubs every unsourced digit before anything reaches the form."""
+    fixture = os.environ.get("CG_PREFILL_FIXTURE")
+    if fixture:
+        data = json.loads(Path(fixture).read_text(encoding="utf-8"))
+    else:
+        lines = "\n".join(f"- [{p['date_iso']}] {p['subject'][:150]}"
+                          for p in precedents) or "- (no precedents found)"
+        raw = (llm_fn or llm_with_fallback)(
+            AI_PROMPT[lang].format(topic=topic, precedent_lines=lines,
+                                   n=n_clauses),
+            temperature=0.3, max_tokens=2000, json_mode=True)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        try:
+            data = json.loads(m.group(0) if m else raw)
+        except json.JSONDecodeError as e:
+            raise LLMError(f"topic-prefill returned malformed JSON: {e}")
+    try:
+        return {"subject": str(data.get("subject") or ""),
+                "file_prefix": str(data.get("file_prefix") or ""),
+                "background": str(data.get("background") or ""),
+                "clauses": [str(c) for c in data.get("clauses") or []],
+                "needs_numbers": [str(q) for q in
+                                  (data.get("needs_numbers") or [])][:5]}
+    except (TypeError, AttributeError) as e:
+        raise LLMError(f"topic-prefill JSON had a wrong shape: {e}")
+
+
 def topic_prefill(topic: str, lang: str = "mr", corpus=None, retrieve_fn=None,
-                  use_ai: bool = False, llm_fn=None, on_date=None) -> dict:
-    """Orchestrator: deterministic skeleton now; the audited AI prose layer
-    (ai_prefill) plugs in on top of it. Never dead-ends: any AI failure
-    leaves the deterministic form intact."""
+                  use_ai: bool = True, llm_fn=None, on_date=None,
+                  n_clauses: int = 3) -> dict:
+    """Orchestrator. Deterministic skeleton first; the AI layer only replaces
+    PROSE on top of it, digit-scrubbed against (topic ∪ shown precedents ∪
+    calendar). Never dead-ends: any AI failure leaves the deterministic form
+    intact and reports itself in ai_error."""
     form = deterministic_prefill(topic, lang, corpus, retrieve_fn, on_date)
     result = {"form": form, "ai_used": False, "ai_error": None,
               "scrubbed": [], "needs_numbers": []}
-    # use_ai branch lands with ai_prefill (audited prose proposal)
+    if not use_ai:
+        return result
+    try:
+        prose = ai_prefill(topic, lang, form["precedents"],
+                           n_clauses=n_clauses, llm_fn=llm_fn)
+    except LLMError as e:
+        result["ai_error"] = str(e)
+        return result
+
+    y = form["date"].year
+    allowed = (_digit_runs(topic)
+               | _digit_runs(" ".join(f"{p['date_iso']} {p['subject'][:150]}"
+                                      for p in form["precedents"]))
+               | _digit_runs(form["fy"])
+               | {str(y), str(y + 1), f"{y % 100:02d}", f"{(y + 1) % 100:02d}"})
+    scrubbed_all = []
+    if prose["subject"].strip():
+        subj, rem = scrub_unsourced_digits(prose["subject"].strip(), allowed)
+        form["subject"] = subj if lang == "en" or subj.endswith("बाबत.") \
+            else _subject_line(subj, lang)
+        scrubbed_all += rem
+    if prose["background"].strip():
+        form["background"], rem = scrub_unsourced_digits(
+            prose["background"].strip(), allowed)
+        scrubbed_all += rem
+    if prose["clauses"]:
+        cleaned = []
+        for c in prose["clauses"]:
+            c2, rem = scrub_unsourced_digits(c.strip(), allowed)
+            if c2:
+                cleaned.append(c2)
+            scrubbed_all += rem
+        if cleaned:
+            form["clauses"] = cleaned
+    form["gr_number"] = propose_gr_number(
+        DEPARTMENTS[form["dept_code"]], lang, form["date"], topic,
+        prefix=prose["file_prefix"].strip() or None)
+    form["code"] = unique_code(form["date"], form["subject"])
+    result.update(ai_used=True, scrubbed=scrubbed_all,
+                  needs_numbers=prose["needs_numbers"])
     return result
 
 

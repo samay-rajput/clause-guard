@@ -581,6 +581,18 @@ with t_gen:
                 st.markdown("  ·  ".join(bits))
                 if p.get("subject"):
                     st.caption(p["subject"][:120])
+        if meta := st.session_state.get("prefill_meta"):
+            if meta.get("ai_used"):
+                st.caption("🤖 AI ने मजकूर सुचवला — प्रत्येक संख्या स्रोताशी "
+                           "पडताळली; अज्ञात रकमा ____ म्हणून रिकाम्या ठेवल्या.")
+            elif meta.get("ai_error"):
+                st.caption(f"AI प्रीफिल अनुपलब्ध — deterministic फॉर्म वापरला. "
+                           f"({meta['ai_error'][:120]})")
+            for q in meta.get("needs_numbers", []):
+                st.warning(f"❓ भरावयाची माहिती: {q}")
+            if meta.get("scrubbed"):
+                st.caption("🧹 स्रोत नसलेल्या संख्या ____ केल्या: "
+                           + ", ".join(meta["scrubbed"][:6]))
     pf = st.session_state.get("prefill") or {}
     pf_refs = "\n".join(r["text"] for r in pf.get("references", []))
     use_ai = st.toggle("🤖 AI-assist — draft the preamble and clauses from a "
