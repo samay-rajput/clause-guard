@@ -527,28 +527,76 @@ with t_gloss:
         cols[i % 2].markdown(f"**{g['mr']}** · {g['en']}{note}")
 
 with t_gen:
-    ai_where = ("locally via Ollama — the brief never leaves this machine"
+    ai_where = ("locally via Ollama — nothing typed here leaves this machine"
                 if LLM_MODE == "ollama" else "via the configured cloud LLMs")
     st.markdown(
-        f"Drafting assistance (§1.2): fill the header fields, then either write "
-        f"the preamble and clauses yourself or let the AI expand a short brief "
-        f"({ai_where}). The deterministic template guarantees every mandatory "
-        f"Manual-of-Office-Procedure section, so a generated draft always "
-        f"carries the full structure (AC-3) — verified by the scorecard below."
+        f"**विषय लिहा → मसुदा मिळवा.** Type a topic and ClauseGuard finds real "
+        f"precedent GRs, infers the department, builds the वाचा references and "
+        f"file number, and prefills the whole form — review any field, then "
+        f"generate. The deterministic template guarantees every mandatory "
+        f"Manual-of-Office-Procedure section (AC-3), and the generated draft "
+        f"goes straight through the full conflict/reference review "
+        f"({ai_where})."
     )
     lang = "en" if st.radio("Language", ["English", "मराठी"], horizontal=True,
+                            index=1,
                             label_visibility="collapsed") == "English" else "mr"
     sample = SAMPLE[lang]
+
+    # ---- पायरी 1: topic → prefill ----
+    tp1, tp2 = st.columns([4, 2])
+    g_topic = tp1.text_input(
+        "GR चा विषय · Topic",
+        placeholder=("उदा. जिल्हा परिषद शाळांना सादिल अनुदान वितरण"
+                     if lang == "mr" else
+                     "e.g. merit scholarship for polytechnic students"))
+    tp2.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)
+    if tp2.button("🔎 पूर्वसंदर्भ शोधा व फॉर्म भरा", use_container_width=True,
+                  disabled=not g_topic.strip(),
+                  help="Find precedent GRs and prefill the form from the topic"):
+        from prefill import topic_prefill
+        with st.status("पूर्वसंदर्भ शोधत आहे… (first run loads the retrieval "
+                       "model, ~30 s)", expanded=False) as status:
+            try:
+                pf_out = topic_prefill(g_topic, lang, corpus=corpus)
+                st.session_state["prefill"] = pf_out["form"]
+                st.session_state["prefill_meta"] = {
+                    k: pf_out[k] for k in ("ai_used", "ai_error", "scrubbed",
+                                           "needs_numbers")}
+                n_prec = len(pf_out["form"]["precedents"])
+                status.update(label=f"फॉर्म भरला — {n_prec} पूर्वसंदर्भ सापडले",
+                              state="complete")
+            except Exception as e:
+                status.update(label=f"प्रीफिल अयशस्वी — फॉर्म रिकामाच ठेवला: {e}",
+                              state="error")
+    if pf := st.session_state.get("prefill"):
+        with st.container(border=True):
+            st.caption(f"**पूर्वसंदर्भ · precedents** — विभाग ओळखला: "
+                       f"**{pf['department']}** (कोड {pf['dept_code']})")
+            for p in pf["precedents"]:
+                bits = [f"`{p['gr_code']}` · {p['date_iso']} · "
+                        f"similarity **{1 - p['distance']:.3f}**"]
+                if link := source_links(p["gr_code"]):
+                    bits.append(link)
+                st.markdown("  ·  ".join(bits))
+                if p.get("subject"):
+                    st.caption(p["subject"][:120])
+    pf = st.session_state.get("prefill") or {}
+    pf_refs = "\n".join(r["text"] for r in pf.get("references", []))
     use_ai = st.toggle("🤖 AI-assist — draft the preamble and clauses from a "
                        "brief (digit-audited: no number invented or dropped)")
     with st.form("gen_form"):
         g1, g2 = st.columns(2)
-        g_subject = g1.text_input("Subject", sample["subject"])
-        g_department = g2.text_input("Department", sample["department"])
-        g_number = g1.text_input("GR number", sample["gr_number"])
-        g_date = g2.date_input("Date")
-        g_refs = st.text_area("Read block — one reference per line",
-                              "\n".join(sample["references"]), height=68)
+        g_subject = g1.text_input("विषय-ओळ · Subject",
+                                  pf.get("subject", sample["subject"]))
+        g_department = g2.text_input("विभाग · Department",
+                                     pf.get("department", sample["department"]))
+        g_number = g1.text_input("शासन निर्णय क्रमांक · GR number",
+                                 pf.get("gr_number", sample["gr_number"]))
+        g_date = g2.date_input("दिनांक · Date")
+        g_refs = st.text_area("वाचा — one reference per line",
+                              pf_refs or "\n".join(sample["references"]),
+                              height=68)
         if use_ai:
             g_brief = st.text_area(
                 "Officer's brief", height=100,
@@ -559,14 +607,19 @@ with t_gen:
             g_background, g_clauses = "", ""
         else:
             g_brief, g_n = "", 3
-            g_background = st.text_area("Preamble background",
-                                        sample["background"], height=80)
-            g_clauses = st.text_area("Operative clauses — one per line",
-                                     "\n".join(sample["clauses"]), height=130)
+            g_background = st.text_area("प्रस्तावना · Preamble background",
+                                        pf.get("background", sample["background"]),
+                                        height=80)
+            g_clauses = st.text_area("कार्यवाहीचे मुद्दे · Operative clauses — one per line",
+                                     "\n".join(pf.get("clauses", sample["clauses"])),
+                                     height=130)
         g3, g4, g5 = st.columns(3)
-        g_head = g3.text_input("Budget head", sample["budget_head"])
-        g_sign = g4.text_input("Signatory", sample["signatory"])
-        g_desig = g5.text_input("Designation", sample["designation"])
+        g_head = g3.text_input("लेखाशीर्ष · Budget head",
+                               pf.get("budget_head", sample["budget_head"]))
+        g_sign = g4.text_input("स्वाक्षरी · Signatory",
+                               pf.get("signatory", sample["signatory"]))
+        g_desig = g5.text_input("पदनाम · Designation",
+                                pf.get("designation", sample["designation"]))
         gb1, gb2 = st.columns([3, 2])
         g_submit = gb1.form_submit_button("✍️ Generate & check draft", type="primary",
                                           use_container_width=True,
