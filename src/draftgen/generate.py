@@ -200,6 +200,73 @@ def generate(fields: dict, use_ai: bool = False, brief: str = "",
     return {"draft": build_draft(f), "ai_used": ai_used, "ai_error": ai_error}
 
 
+# ---------- round-2: structured-form path (topic → form → draft) ----------
+
+def to_flat_fields(form: dict) -> dict:
+    """GRForm (topic flow / renderer contract) → build_draft's fields dict.
+    References may be dicts ({"text": …}) or plain strings."""
+    refs = [(r.get("text") if isinstance(r, dict) else str(r)).strip()
+            for r in form.get("references") or []]
+    return {"lang": form.get("lang", "en"),
+            "subject": str(form.get("subject") or "").strip(),
+            "department": str(form.get("department") or "").strip(),
+            "gr_number": str(form.get("gr_number") or "").strip(),
+            "date": form["date"],
+            "references": [r for r in refs if r],
+            "background": str(form.get("background") or "").strip(),
+            "clauses": [str(c).strip() for c in form.get("clauses") or []
+                        if str(c).strip()],
+            "budget_head": str(form.get("budget_head") or "").strip(),
+            "signatory": str(form.get("signatory") or "").strip(),
+            "designation": str(form.get("designation") or "").strip()}
+
+
+def form_digit_audit(form: dict, draft_text: str) -> dict:
+    """The render rail: every digit run in the final draft must come from the
+    user-approved form or the computed structural values (code, financial
+    year, date, the fixed 400 032 PIN, list numbering ≤ 31). Amounts, dates
+    and codes cannot appear unless the user saw them in the form."""
+    flat = to_flat_fields(form)
+    d = flat["date"]
+    allowed = set()
+    for chunk in (flat["subject"], flat["gr_number"], flat["background"],
+                  flat["budget_head"], *flat["references"], *flat["clauses"]):
+        allowed |= _digit_runs(chunk)
+    allowed |= _digit_runs(financial_year(d))
+    allowed |= {unique_code(d, flat["subject"]), str(d.year),
+                f"{d.month:02d}", f"{d.day:02d}", "400", "032"}
+    allowed |= {str(i) for i in range(0, 32)}      # list numbering + day/month
+    produced = _digit_runs(draft_text)
+    must_appear = set()
+    for chunk in (flat["subject"], flat["background"], *flat["clauses"]):
+        must_appear |= _digit_runs(chunk)
+    return {"ok": not (produced - allowed) and not (must_appear - produced),
+            "invented": sorted(produced - allowed),
+            "dropped": sorted(must_appear - produced)}
+
+
+def generate_from_form(form: dict) -> dict:
+    """Deterministic generation from a user-approved GRForm — the topic flow's
+    render rail. Blocks on unfilled ____ blanks; audits the result. The form's
+    `code` is pinned to what build_draft embeds, so the authentic renderer and
+    the canonical text always agree."""
+    flat = to_flat_fields(form)
+    blanks = [lbl for lbl, txt in
+              [("विषय/subject", flat["subject"]),
+               ("प्रस्तावना/background", flat["background"])] if "____" in txt]
+    blanks += [f"कलम {i}" for i, c in enumerate(flat["clauses"], 1)
+               if "____" in c]
+    if blanks:
+        return {"error": "unfilled_blanks", "blanks": blanks}
+    draft = build_draft(flat)
+    out_form = dict(form)
+    out_form["code"] = unique_code(flat["date"], flat["subject"])
+    out_form["fy"] = financial_year(flat["date"])
+    return {"draft": draft, "form": out_form,
+            "audit": form_digit_audit(form, draft),
+            "ai_used": False, "ai_error": None}
+
+
 SAMPLE = {
     "en": {
         "lang": "en",

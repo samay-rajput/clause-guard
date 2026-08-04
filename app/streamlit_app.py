@@ -642,6 +642,7 @@ with t_gen:
     if g_submit or g_draft_only:
         from scorecard import score
         from glossary_check import check_terminology
+        from generate import generate_from_form
         fields = {"lang": lang, "subject": g_subject, "department": g_department,
                   "gr_number": g_number, "date": g_date,
                   "references": [r for r in g_refs.splitlines() if r.strip()],
@@ -649,9 +650,33 @@ with t_gen:
                   "clauses": [c for c in g_clauses.splitlines() if c.strip()],
                   "budget_head": g_head, "signatory": g_sign,
                   "designation": g_desig}
-        with st.spinner("drafting…"):
-            g_out = generate_draft(fields, use_ai=use_ai, brief=g_brief,
-                                   n_clauses=g_n)
+        if use_ai:
+            # legacy brief-expansion path: the AI may add prose beyond the form,
+            # so no structured gr_form is claimed — the authentic export falls
+            # back to parsing the flat draft text
+            with st.spinner("drafting…"):
+                g_out = generate_draft(fields, use_ai=True, brief=g_brief,
+                                       n_clauses=g_n)
+            st.session_state.pop("gr_form", None)
+        else:
+            # render rail: deterministic generation from the reviewed form,
+            # carrying the prefill's structured extras for the renderer
+            pf_extras = st.session_state.get("prefill") or {}
+            gr_form = {k: pf_extras[k] for k in
+                       ("topic", "dept_code", "copy_to", "precedents")
+                       if pf_extras.get(k) is not None}
+            gr_form.update(fields)
+            gr_form["references"] = [{"text": r} for r in fields["references"]]
+            g_out = generate_from_form(gr_form)
+            if g_out.get("error"):
+                st.error("फॉर्ममध्ये ____ रिकाम्या जागा आहेत — आधी भरा: "
+                         + ", ".join(g_out["blanks"]))
+                g_out = None
+            else:
+                st.session_state["gr_form"] = g_out["form"]
+    else:
+        g_out = False
+    if g_out:
         st.session_state["generated"] = g_out
         st.session_state["generated_score"] = score(g_out["draft"])
         st.session_state["generated_terms"] = check_terminology(g_out["draft"])
@@ -680,6 +705,14 @@ with t_gen:
         elif g_out["ai_error"]:
             st.warning(f"AI assist unavailable — deterministic scaffold used "
                        f"instead. ({g_out['ai_error']})")
+        if aud := g_out.get("audit"):
+            if aud.get("ok"):
+                st.caption("🔒 अंक-लेखापरीक्षण उत्तीर्ण — मसुद्यातील प्रत्येक संख्या "
+                           "फॉर्ममधूनच आली आहे (सांकेतांक व आर्थिक वर्ष वगळता, "
+                           "जे नियमानुसार गणले जातात).")
+            else:
+                st.error(f"अंक-लेखापरीक्षण अयशस्वी — invented: {aud['invented']} "
+                         f"/ dropped: {aud['dropped']}")
         gs = st.session_state.get("generated_score")
         gt = st.session_state.get("generated_terms")
         m1, m2, m3, m4 = st.columns(4)
