@@ -23,6 +23,7 @@ from build_source_urls import links_for  # noqa: E402
 from trail import TRAIL_FILE, append_run, load_runs, to_csv  # noqa: E402
 from writer import draft_docx, draft_pdf, report_docx, report_pdf  # noqa: E402
 from generate import SAMPLE, generate as generate_draft  # noqa: E402
+from chunk_clauses import MIN_CHARS  # noqa: E402
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -146,42 +147,25 @@ def read_upload(f) -> str:
     return f.getvalue().decode("utf-8", errors="replace")
 
 
-default_text = ""
-if choice != "—":
-    default_text = (ROOT / "data" / "planted" / f"{choice}.txt").read_text(encoding="utf-8")
-
-upload = st.file_uploader("📎 Upload a draft GR — or paste one below",
-                          type=["txt", "md", "pdf"])
-if upload is not None:
-    try:
-        default_text = read_upload(upload)          # an upload overrides the scenario picker
-        if not default_text.strip():
-            st.warning(f"No text layer found in **{upload.name}** — if it is a scanned GR, "
-                       "paste the text instead.")
-    except Exception as e:
-        st.error(f"Could not read {upload.name}: {e}")
-
-draft = st.text_area("Paste / edit the draft GR under review:", value=default_text,
-                     height=240, placeholder="Paste a draft Government Resolution here…")
-
-run = st.button("🔍 Review draft", type="primary", use_container_width=True,
-                disabled=not draft.strip())
-
-if run and draft.strip():
+def run_full_review(draft_text: str, k: int, source: str = "review"):
+    """Score + terminology + references + conflict review of one draft, writing
+    the same session keys every tab reads. Called by the Review button AND by
+    the generate flow, so a generated draft goes through the identical pipeline
+    instead of asking the user to copy-paste it into the review box."""
     # Scorecard (always available, deterministic)
     from scorecard import score
     if "score" in st.session_state:  # keep the previous run for the before/after delta
         st.session_state["score_prev"] = st.session_state["score"]
-    st.session_state["score"] = score(draft)
+    st.session_state["score"] = score(draft_text)
 
     # Terminology (always available, deterministic — FR-8/FR-9)
     from glossary_check import check_terminology
-    st.session_state["terms"] = check_terminology(draft)
+    st.session_state["terms"] = check_terminology(draft_text)
 
     # References (needs corpus)
     if corpus:
         from citations import analyze_references
-        st.session_state["refs"] = analyze_references(draft, corpus)
+        st.session_state["refs"] = analyze_references(draft_text, corpus)
 
     # Conflicts (needs index + LLM keys)
     try:
@@ -195,7 +179,7 @@ if run and draft.strip():
             msgs["n"] += 1
             prog.progress(min(0.95, msgs["n"] / 40), text=msg)
 
-        st.session_state["review"] = review_draft(draft, top_k=top_k, progress=cb)
+        st.session_state["review"] = review_draft(draft_text, top_k=k, progress=cb)
         prog.progress(1.0, text="done")
     except Exception as e:
         st.session_state["review"] = {"error": str(e)}
@@ -205,14 +189,50 @@ if run and draft.strip():
     # trail. A trail failure must never break a review.
     try:
         st.session_state["audit_last"] = append_run(
-            draft,
+            draft_text,
             score=st.session_state.get("score"),
             terms=st.session_state.get("terms"),
             refs=st.session_state.get("refs"),
             review=st.session_state.get("review"),
+            source=source,
         )
     except Exception as e:
         st.session_state["audit_error"] = str(e)
+
+
+default_text = ""
+if choice != "—":
+    default_text = (ROOT / "data" / "planted" / f"{choice}.txt").read_text(encoding="utf-8")
+
+# Picking a scenario reclaims the review box from a previously generated draft.
+if st.session_state.get("last_choice") != choice:
+    st.session_state["last_choice"] = choice
+    if choice != "—":
+        st.session_state["send_generated"] = False
+
+upload = st.file_uploader("📎 Upload a draft GR — or paste one below",
+                          type=["txt", "md", "pdf"])
+if upload is not None:
+    try:
+        default_text = read_upload(upload)          # an upload overrides the scenario picker
+        if not default_text.strip():
+            st.warning(f"No text layer found in **{upload.name}** — if it is a scanned GR, "
+                       "paste the text instead.")
+    except Exception as e:
+        st.error(f"Could not read {upload.name}: {e}")
+elif st.session_state.get("send_generated") and st.session_state.get("generated"):
+    # A freshly generated draft lands straight in the review box (an upload
+    # still overrides it; picking a scenario reclaims the box above).
+    default_text = st.session_state["generated"]["draft"]
+
+draft = st.text_area("Paste / edit the draft GR under review:", value=default_text,
+                     height=240, placeholder="Paste a draft Government Resolution here…")
+
+run = st.button("🔍 Review draft", type="primary", use_container_width=True,
+                disabled=not draft.strip())
+
+if run and draft.strip():
+    run_full_review(draft, top_k)
 
 
 if draft.strip():
@@ -347,6 +367,30 @@ def suggested_fix(c: dict) -> str:
             f"`{c['meta'].get('gr_code', '?')}` for this benefit.")
 
 
+def render_conflict_card(c: dict):
+    """One verified conflict as a bordered card — shared by the Conflicts tab
+    and the generate flow's inline results."""
+    m = c["meta"]
+    with st.container(border=True):
+        st.markdown(f"#### 🔴 Conflict with GR `{m.get('gr_code','?')}`")
+        if cap := match_caption(m):
+            st.caption(cap)
+        value_chips(c["reason"])
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Draft clause**")
+            st.warning(c["draft"])
+        with col2:
+            st.markdown(f"**Existing GR** — {m.get('department','?')}  \n"
+                        f"№ `{m.get('gr_number','?')}` · {m.get('date','?')}")
+            st.info(c["candidate"])
+        st.markdown(f"**Why it conflicts:** {c['reason']}")
+        if fix := suggested_fix(c):
+            st.markdown(fix)
+        with st.expander("📝 Drafting-officer explanation"):
+            st.markdown(c["explanation"])
+
+
 with t_conf:
     r = st.session_state.get("review")
     if not r:
@@ -384,25 +428,7 @@ with t_conf:
             else:
                 st.success("No conflicts flagged against the indexed corpus.")
         for c in r["conflicts"]:
-            m = c["meta"]
-            with st.container(border=True):
-                st.markdown(f"#### 🔴 Conflict with GR `{m.get('gr_code','?')}`")
-                if cap := match_caption(m):
-                    st.caption(cap)
-                value_chips(c["reason"])
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Draft clause**")
-                    st.warning(c["draft"])
-                with col2:
-                    st.markdown(f"**Existing GR** — {m.get('department','?')}  \n"
-                                f"№ `{m.get('gr_number','?')}` · {m.get('date','?')}")
-                    st.info(c["candidate"])
-                st.markdown(f"**Why it conflicts:** {c['reason']}")
-                if fix := suggested_fix(c):
-                    st.markdown(fix)
-                with st.expander("📝 Drafting-officer explanation"):
-                    st.markdown(c["explanation"])
+            render_conflict_card(c)
 
 with t_refs:
     refs = st.session_state.get("refs")
@@ -541,9 +567,14 @@ with t_gen:
         g_head = g3.text_input("Budget head", sample["budget_head"])
         g_sign = g4.text_input("Signatory", sample["signatory"])
         g_desig = g5.text_input("Designation", sample["designation"])
-        g_submit = st.form_submit_button("✍️ Generate draft", type="primary",
-                                         use_container_width=True)
-    if g_submit:
+        gb1, gb2 = st.columns([3, 2])
+        g_submit = gb1.form_submit_button("✍️ Generate & check draft", type="primary",
+                                          use_container_width=True,
+                                          help="Generate, then run the full conflict / "
+                                               "reference / compliance review on it")
+        g_draft_only = gb2.form_submit_button("📝 Draft only (no review)",
+                                              use_container_width=True)
+    if g_submit or g_draft_only:
         from scorecard import score
         from glossary_check import check_terminology
         fields = {"lang": lang, "subject": g_subject, "department": g_department,
@@ -559,12 +590,24 @@ with t_gen:
         st.session_state["generated"] = g_out
         st.session_state["generated_score"] = score(g_out["draft"])
         st.session_state["generated_terms"] = check_terminology(g_out["draft"])
-        # a generated draft IS an AI suggestion — it belongs in the trail (FR-15)
-        try:
-            append_run(g_out["draft"], score=st.session_state["generated_score"],
-                       terms=st.session_state["generated_terms"], source="generate")
-        except Exception as e:
-            st.session_state["audit_error"] = str(e)
+        # clauses under the chunker's floor never enter conflict screening —
+        # surface that instead of letting them silently skip the check
+        st.session_state["generated_short"] = [
+            c for c in fields["clauses"] if len(c.strip()) < MIN_CHARS]
+        st.session_state["send_generated"] = True   # review box shows this draft
+        st.session_state["generated_reviewed"] = bool(g_submit)
+        if g_submit:
+            # the identical pipeline the Review button runs — one trail record
+            # with source="generate+review" covers generation AND review (FR-15)
+            run_full_review(g_out["draft"], top_k, source="generate+review")
+        else:
+            # a generated draft IS an AI suggestion — it belongs in the trail (FR-15)
+            try:
+                append_run(g_out["draft"], score=st.session_state["generated_score"],
+                           terms=st.session_state["generated_terms"], source="generate")
+            except Exception as e:
+                st.session_state["audit_error"] = str(e)
+        st.rerun()   # re-render so the review box + report header show this draft
     if g_out := st.session_state.get("generated"):
         if g_out["ai_used"]:
             st.caption("🤖 Preamble and clauses drafted by the AI layer — "
@@ -584,8 +627,27 @@ with t_gen:
         m4.download_button("⬇️ PDF", draft_pdf(g_out["draft"]),
                            file_name="clauseguard_generated_draft.pdf",
                            mime="application/pdf", use_container_width=True)
-        st.text_area("Generated draft — paste it into the review box above to "
-                     "run the full conflict/reference review",
+        if short := st.session_state.get("generated_short"):
+            st.caption(f"⚠️ {len(short)} operative clause(s) shorter than {MIN_CHARS} "
+                       "characters — too short for conflict screening. Lengthen them "
+                       "for full coverage.")
+        if st.session_state.get("generated_reviewed"):
+            r = st.session_state.get("review") or {}
+            if "error" in r:
+                st.warning(f"Draft is ready, but the conflict check was unavailable: "
+                           f"{r['error']} — re-run it any time from the review box above.")
+            else:
+                n_conf = len(r.get("conflicts", []))
+                if n_conf:
+                    st.markdown(f"##### ⚠️ Conflict check — {n_conf} verified "
+                                f"conflict(s) against the corpus")
+                else:
+                    st.success("Conflict check — no conflicts flagged against the "
+                               "indexed corpus.")
+                for c in r.get("conflicts", []):
+                    render_conflict_card(c)
+        st.text_area("Generated draft — it is also in the review box above; the "
+                     "report header and tabs cover it like any reviewed draft",
                      g_out["draft"], height=340)
 
 with t_audit:

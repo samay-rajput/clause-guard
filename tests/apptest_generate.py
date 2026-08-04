@@ -1,8 +1,9 @@
 """§1.2 / AC-3 verification via AppTest — offline deterministic path.
 
-Submitting the Generate form with its prefilled sample must produce a draft
-scoring 100% on the template checklist, record a source="generate" trail
-entry, and raise 0 exceptions. No LLM, no index required.
+Submitting the Generate form ("Draft only" — the path that skips the conflict
+review) with its prefilled sample must produce a draft scoring 100% on the
+template checklist, record a source="generate" trail entry, and raise 0
+exceptions. No LLM, no index required.
 
 Run:  python tests/apptest_generate.py
 """
@@ -27,8 +28,8 @@ def main():
                                default_timeout=900)
         at.run()
         assert not at.exception, [e.value for e in at.exception]
-        gen = [b for b in at.button if "Generate draft" in (b.label or "")]
-        assert gen, f"Generate button not found among {[b.label for b in at.button]}"
+        gen = [b for b in at.button if "Draft only" in (b.label or "")]
+        assert gen, f"Draft-only button not found among {[b.label for b in at.button]}"
         gen[0].click()
         at.run()
         assert not at.exception, [e.value for e in at.exception]
