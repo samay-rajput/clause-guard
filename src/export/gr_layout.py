@@ -406,6 +406,257 @@ def gr_pdf(form: dict) -> bytes:
     return bytes(pdf.output())
 
 
+# ---------- DOCX parity ----------
+
+def _bold_cs(run):
+    """Bold that actually applies to Devanagari: w:b alone does not embolden
+    complex-script runs — w:bCs must be set too."""
+    from docx.oxml.ns import qn
+    run.font.bold = True
+    rpr = run._element.get_or_add_rPr()
+    if rpr.find(qn("w:bCs")) is None:
+        el = rpr.makeelement(qn("w:bCs"), {})
+        rpr.append(el)
+
+
+def _run_sz_cs(run, size_pt: float):
+    """Complex-script size (w:szCs) — Word sizes Devanagari from szCs, which
+    python-docx's font.size does not set."""
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+    run.font.size = Pt(size_pt)
+    rpr = run._element.get_or_add_rPr()
+    szcs = rpr.find(qn("w:szCs"))
+    if szcs is None:
+        szcs = rpr.makeelement(qn("w:szCs"), {})
+        rpr.append(szcs)
+    szcs.set(qn("w:val"), str(int(size_pt * 2)))
+
+
+def _para(container, text="", *, align=None, bold=False, size=SIZE_BODY,
+          left_indent=None, first_line_indent=None, line_exact=LINE_H_BODY,
+          space_after=0.0, tabs=()):
+    from docx.enum.text import WD_LINE_SPACING
+    from docx.shared import Pt
+    p = container.add_paragraph()
+    pf = p.paragraph_format
+    if align is not None:
+        p.alignment = align
+    if left_indent is not None:
+        pf.left_indent = Pt(left_indent)
+    if first_line_indent is not None:
+        pf.first_line_indent = Pt(first_line_indent)
+    pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+    pf.line_spacing = Pt(line_exact)
+    pf.space_after = Pt(space_after)
+    pf.space_before = Pt(0)
+    for x in tabs:
+        pf.tab_stops.add_tab_stop(Pt(x))
+    if text:
+        run = p.add_run(text)
+        _run_sz_cs(run, size)
+        if bold:
+            _bold_cs(run)
+    return p
+
+
+def _p_border_bottom(p, val="single", sz="6"):
+    from docx.oxml.ns import qn
+    ppr = p._element.get_or_add_pPr()
+    pbdr = ppr.makeelement(qn("w:pBdr"), {})
+    bottom = ppr.makeelement(qn("w:bottom"), {})
+    bottom.set(qn("w:val"), val)
+    bottom.set(qn("w:sz"), sz)
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), "000000")
+    pbdr.append(bottom)
+    ppr.append(pbdr)
+
+
+def _add_field(p, instr: str, cached: str = "1"):
+    """PAGE / NUMPAGES field with a cached value so LibreOffice renders it
+    without a manual refresh."""
+    from docx.oxml.ns import qn
+    r1 = p.add_run()._element
+    fld = r1.makeelement(qn("w:fldChar"), {})
+    fld.set(qn("w:fldCharType"), "begin")
+    r1.append(fld)
+    r2 = p.add_run()._element
+    it = r2.makeelement(qn("w:instrText"), {})
+    it.set(qn("xml:space"), "preserve")
+    it.text = f" {instr} "
+    r2.append(it)
+    r3 = p.add_run()._element
+    sep = r3.makeelement(qn("w:fldChar"), {})
+    sep.set(qn("w:fldCharType"), "separate")
+    r3.append(sep)
+    p.add_run(cached)
+    r4 = p.add_run()._element
+    end = r4.makeelement(qn("w:fldChar"), {})
+    end.set(qn("w:fldCharType"), "end")
+    r4.append(end)
+
+
+def _add_hyperlink(p, text: str, url: str, size=SIZE_BODY):
+    from docx.oxml.ns import qn
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    r_id = p.part.relate_to(url, RT.HYPERLINK, is_external=True)
+    hl = p._element.makeelement(qn("w:hyperlink"), {})
+    hl.set(qn("r:id"), r_id)
+    run = p.add_run(text)
+    _run_sz_cs(run, size)
+    run.font.underline = True
+    from docx.shared import RGBColor
+    run.font.color.rgb = RGBColor(0x00, 0x00, 0xEE)
+    p._element.remove(run._element)
+    hl.append(run._element)
+    p._element.append(hl)
+
+
+def gr_docx(form: dict) -> bytes:
+    """Authentic-format GR as DOCX (Nirmala UI — Word shapes the Devanagari).
+    Same geometry as the PDF; accepted deviation: PAGE/NUMPAGES field digits
+    render in ASCII (fields cannot emit Devanagari digits), all literal text
+    still carries Devanagari digits. The PDF is the pixel-faithful artifact;
+    this is the editable companion."""
+    import io
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH as AL
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+
+    f = _normalize(form)
+    lang, t = f["lang"], L10N[f["lang"]]
+    T = to_devanagari_digits if lang == "mr" else (lambda s: s)
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Nirmala UI"
+    style.font.size = Pt(SIZE_BODY)
+    rfonts = style.element.get_or_add_rPr().get_or_add_rFonts()
+    rfonts.set(qn("w:eastAsia"), "Nirmala UI")
+    rfonts.set(qn("w:cs"), "Nirmala UI")
+
+    sec = doc.sections[0]
+    sec.page_width, sec.page_height = Pt(PAGE_W), Pt(PAGE_H)
+    sec.left_margin, sec.right_margin = Pt(MARGIN_L), Pt(MARGIN_R)
+    sec.top_margin, sec.bottom_margin = Pt(CONTENT_TOP), Pt(BREAK_MARGIN)
+    sec.header_distance, sec.footer_distance = Pt(HEADER_Y), Pt(PAGE_H - FOOTER_Y - 14)
+    sec.different_first_page_header_footer = True
+
+    # running header (pages 2+): file-number line, bold number, double rule
+    hp = sec.header.paragraphs[0]
+    hp.paragraph_format.space_after = Pt(0)
+    r = hp.add_run(t["hdr_prefix"] + " ")
+    _run_sz_cs(r, SIZE_HF)
+    rb = hp.add_run(T(f["gr_number"]))
+    _run_sz_cs(rb, SIZE_HF)
+    _bold_cs(rb)
+    _p_border_bottom(hp, val="thinThickSmallGap", sz="12")
+    # footer (pages 2+): पृष्ठ <total> पैकी <n>, right-aligned
+    fp = sec.footer.paragraphs[0]
+    fp.alignment = AL.RIGHT
+    if lang == "mr":
+        r = fp.add_run("पृष्ठ ")
+        _run_sz_cs(r, SIZE_HF)
+        _add_field(fp, "NUMPAGES")
+        r = fp.add_run(" पैकी ")
+        _run_sz_cs(r, SIZE_HF)
+        _add_field(fp, "PAGE")
+    else:
+        r = fp.add_run("Page ")
+        _run_sz_cs(r, SIZE_HF)
+        _add_field(fp, "PAGE")
+        r = fp.add_run(" of ")
+        _run_sz_cs(r, SIZE_HF)
+        _add_field(fp, "NUMPAGES")
+    # first page: empty header/footer
+    sec.first_page_header.paragraphs[0].text = ""
+    sec.first_page_footer.paragraphs[0].text = ""
+
+    # subject block (top-right), rule under the subject proper
+    sp = _para(doc, T(f["subject"]), align=AL.JUSTIFY, bold=True,
+               left_indent=SUBJECT_X - MARGIN_L, line_exact=LINE_H_TIGHT)
+    _p_border_bottom(sp)
+    if f["topic"] and f["topic"] != f["subject"]:
+        _para(doc, T(f["topic"]), align=AL.JUSTIFY, bold=True,
+              left_indent=SUBJECT_X - MARGIN_L, line_exact=LINE_H_TIGHT)
+
+    # letterhead
+    date_str = _marathi_date(f["date"]) if lang == "mr" else _english_date(f["date"])
+    head = [(t["govt"], SIZE_TITLE), (T(f["department"]), SIZE_BODY),
+            (T(t["grno"].format(no=f["gr_number"])), SIZE_BODY),
+            (t["addr1"], SIZE_BODY), (T(t["addr2"]), SIZE_BODY),
+            (T(t["date"].format(date=date_str)), SIZE_BODY)]
+    for i, (line, size) in enumerate(head):
+        _para(doc, line, align=AL.CENTER, bold=True, size=size,
+              line_exact=LINE_H_TIGHT,
+              space_after=PARA_GAP if i == len(head) - 1 else 0)
+
+    # वाचा — label + first ref on one line, hanging indents
+    refs = [T(r["text"] if isinstance(r, dict) else str(r))
+            for r in f["references"]] or ["—"]
+    first = _para(doc, align=AL.LEFT, line_exact=LINE_H_TIGHT,
+                  left_indent=READ_TEXT_X - MARGIN_L,
+                  first_line_indent=-(READ_TEXT_X - MARGIN_L),
+                  tabs=(READ_NUM_X - MARGIN_L, READ_TEXT_X - MARGIN_L))
+    lr = first.add_run(t["read"])
+    _run_sz_cs(lr, SIZE_BODY)
+    _bold_cs(lr)
+    rr = first.add_run("\t" + (T("1)") if f["references"] else "") + "\t" + refs[0])
+    _run_sz_cs(rr, SIZE_REFS)
+    for i, ref in enumerate(refs[1:], 2):
+        p = _para(doc, line_exact=LINE_H_TIGHT,
+                  left_indent=READ_TEXT_X - MARGIN_L,
+                  first_line_indent=-(READ_TEXT_X - READ_NUM_X),
+                  tabs=(READ_TEXT_X - MARGIN_L,))
+        run = p.add_run(T(f"{i})") + "\t" + ref)
+        _run_sz_cs(run, SIZE_REFS)
+
+    # प्रस्तावना
+    _para(doc, t["preamble"], bold=True, space_after=0,
+          line_exact=LINE_H_BODY)
+    for para in f["preamble_paras"]:
+        _para(doc, T(para), align=AL.JUSTIFY, first_line_indent=FIRST_INDENT,
+              space_after=PARA_GAP)
+
+    # शासन निर्णय
+    _para(doc, t["resolution"], bold=True, line_exact=LINE_H_BODY)
+    for i, clause in enumerate(f["clauses"], 1):
+        _para(doc, T(f"{i}. {clause}"), align=AL.JUSTIFY, space_after=PARA_GAP)
+    avail_pre, avail_post = t["avail"].split(
+        "[www.maharashtra.gov.in](https://www.maharashtra.gov.in)")
+    ap = _para(doc, align=AL.JUSTIFY, space_after=PARA_GAP)
+    run = ap.add_run(T(f"{len(f['clauses']) + 1}. ") + T(avail_pre))
+    _run_sz_cs(run, SIZE_BODY)
+    _add_hyperlink(ap, "www.maharashtra.gov.in", "https://www.maharashtra.gov.in")
+    run = ap.add_run(T(avail_post.format(code=T(f["code"]))))
+    _run_sz_cs(run, SIZE_BODY)
+
+    # signature — no fabricated stamp; centred on the SIGN_CX axis
+    _para(doc, t["governor"], align=AL.CENTER, space_after=60)
+    off = 2 * (SIGN_CX - (MARGIN_L + (PAGE_W - MARGIN_R)) / 2)
+    _para(doc, T(f"( {f['signatory']} )"), align=AL.CENTER, bold=True,
+          left_indent=off)
+    _para(doc, T(f["designation"] + t["sign_suffix"]), align=AL.CENTER,
+          left_indent=off, space_after=PARA_GAP)
+
+    # प्रति
+    if f["copy_to"]:
+        _para(doc, t["copy"], bold=True, line_exact=LINE_H_BODY)
+        for i, entry in enumerate(f["copy_to"], 1):
+            p = _para(doc, line_exact=LINE_H_TIGHT,
+                      left_indent=COPY_TEXT_X - MARGIN_L,
+                      first_line_indent=-(COPY_TEXT_X - COPY_NUM_X),
+                      tabs=(COPY_TEXT_X - MARGIN_L,))
+            run = p.add_run(T(f"{i})") + "\t" + T(entry))
+            _run_sz_cs(run, SIZE_COPY)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 if __name__ == "__main__":
     # Calibration gate: render the SAMPLE fixture in both languages, rasterize
     # alongside the gold-standard pages for side-by-side eyeballing.
@@ -437,10 +688,11 @@ if __name__ == "__main__":
                      "Select file, TE-2."])
         data = gr_pdf(form)
         (out / f"selftest_{lang}.pdf").write_bytes(data)
+        (out / f"selftest_{lang}.docx").write_bytes(gr_docx(form))
         doc = fitz.open(stream=data, filetype="pdf")
         for i, page in enumerate(doc, 1):
             page.get_pixmap(dpi=140).save(out / f"gen_{lang}_p{i}.png")
-        print(f"[{lang}] {doc.page_count} pages -> {out}\\gen_{lang}_p*.png")
+        print(f"[{lang}] {doc.page_count} pages -> {out}\\gen_{lang}_p*.png + .docx")
     gold = fitz.open(ROOT / "data" / "raw_pdfs" / "202402271742452721.pdf")
     for i, page in enumerate(gold, 1):
         page.get_pixmap(dpi=140).save(out / f"gold_p{i}.png")
