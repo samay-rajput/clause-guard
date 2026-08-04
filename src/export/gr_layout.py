@@ -406,6 +406,122 @@ def gr_pdf(form: dict) -> bytes:
     return bytes(pdf.output())
 
 
+# ---------- flat-text fallback ----------
+
+_SEC_READ = re.compile(r"^\s*(?:वाचा|Read)\s*[:\-–]+\s*$")
+_SEC_PRE = re.compile(r"^\s*(?:प्रस्तावना|Preamble)\s*[:\-–]+\s*$")
+_SEC_RES = re.compile(r"^\s*(?:शासन निर्णय|Government Resolution)\s*[:\-–]+\s*$")
+_SEC_COPY = re.compile(r"^\s*(?:प्रत|प्रति|Copy to)\s*,?\s*$")
+_GOVT = re.compile(r"^\s*(?:महाराष्ट्र शासन|GOVERNMENT OF MAHARASHTRA)\s*$")
+_GRNO = re.compile(r"^\s*(?:शासन निर्णय क्रमांक|Government Resolution No\.?)\s*"
+                   r"[:\-–]*\s*(.+?)\s*,?\s*$")
+_DATE = re.compile(r"^\s*(?:दिनांक|Date)\s*[:\-–]*\s*(.+?)\s*,?\s*$")
+_ITEM = re.compile(r"^\s*\(?([0-9०-९]{1,2})[).]\s+(.*)$")
+_SIGN = re.compile(r"^\s*\(\s*(.+?)\s*\)\s*$")
+_CODE = re.compile(r"\b(20\d{16})\b")
+_EN_MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+              "August", "September", "October", "November", "December"]
+
+
+def _parse_date(s: str, lang: str):
+    m = re.search(r"(\d{1,2})\s+(\S+),?\s+(\d{4})", s or "")
+    if m:
+        months = MARATHI_MONTHS if lang == "mr" else _EN_MONTHS
+        for i, name in enumerate(months, 1):
+            if m.group(2).startswith(name[:3]) or name.startswith(m.group(2)[:3]):
+                try:
+                    return date_cls(int(m.group(3)), i, int(m.group(1)))
+                except ValueError:
+                    break
+    m = re.search(r"(\d{1,2})[./-](\d{1,2})[./-](\d{4})", s or "")
+    if m:
+        try:
+            return date_cls(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            pass
+    return None
+
+
+def parse_draft(draft_text: str) -> dict:
+    """Best-effort GRForm from a flat draft (the build_draft scaffold or a
+    hand-typed/edited draft in the review box). Missing pieces fall back to
+    _normalize defaults, so the authentic export never raises on plain text."""
+    text = draft_text or ""
+    lines = text.splitlines()
+    lang = "mr" if re.search(r"[ऀ-ॿ]", text) else "en"
+    f = {"lang": lang, "references": [], "clauses": [], "copy_to": []}
+
+    govt_i = next((i for i, l in enumerate(lines) if _GOVT.match(l)), None)
+    if govt_i is not None:
+        f["subject"] = " ".join(l.strip() for l in lines[:govt_i] if l.strip())
+        if govt_i + 1 < len(lines):
+            f["department"] = lines[govt_i + 1].strip()
+    section = "head"
+    body: dict = {"pre": [], "res": []}
+    for i, line in enumerate(lines[(govt_i or 0):], start=govt_i or 0):
+        s = line.strip()
+        if m := _GRNO.match(line):
+            f.setdefault("gr_number", m.group(1))
+            continue
+        if m := _DATE.match(line):
+            if d := _parse_date(m.group(1), lang):
+                f.setdefault("date", d)
+            continue
+        if _SEC_READ.match(line):
+            section = "read"
+            continue
+        if _SEC_PRE.match(line):
+            section = "pre"
+            continue
+        if _SEC_RES.match(line):
+            section = "res"
+            continue
+        if _SEC_COPY.match(line):
+            section = "copy"
+            continue
+        if section == "read":
+            if m := _ITEM.match(line):
+                f["references"].append({"text": m.group(2).strip()})
+            elif s and s != "—" and f["references"]:
+                f["references"][-1]["text"] += " " + s
+        elif section == "pre":
+            body["pre"].append(line)
+        elif section == "res":
+            body["res"].append(line)
+        elif section == "copy":
+            if m := _ITEM.match(line):
+                f["copy_to"].append(m.group(2).strip())
+            elif s and f["copy_to"]:
+                f["copy_to"][-1] += " " + s
+
+    f["background"] = "\n".join(body["pre"]).strip()
+
+    # resolution body → clauses; the availability para (has the 18-digit code)
+    # and everything after the governor line are re-emitted by the renderer
+    res_text = "\n".join(body["res"])
+    if m := _CODE.search(res_text):
+        f["code"] = m.group(1)
+    tail_markers = ("राज्यपाल", "By order and in the name")
+    kept = []
+    for para in re.split(r"\n\s*\n", res_text):
+        p = para.strip()
+        if not p or _CODE.search(p) or any(t in p for t in tail_markers):
+            continue
+        if m := _SIGN.match(p.splitlines()[0]):
+            f.setdefault("signatory", m.group(1))
+            rest = p.splitlines()[1:]
+            if rest:
+                f.setdefault("designation",
+                             re.sub(r",\s*(?:महाराष्ट्र शासन|Government of "
+                                    r"Maharashtra)\s*$", "", rest[0].strip()))
+            continue
+        cleaned = re.sub(r"^\s*\(?[0-9०-९]{1,2}[).]\s+", "",
+                         " ".join(l.strip() for l in p.splitlines()))
+        if cleaned:
+            f["clauses"].append(cleaned)
+    return f
+
+
 # ---------- DOCX parity ----------
 
 def _bold_cs(run):
