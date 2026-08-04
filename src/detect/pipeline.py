@@ -126,6 +126,23 @@ def _values_conflict(v1: str, v2: str) -> bool:
     a, b = (v1 or "").strip().lower(), (v2 or "").strip().lower()
     return bool(a and b and a != b and a not in b and b not in a)
 
+
+def _grounded(value: str, text: str) -> bool:
+    """An extracted NUMERIC value only counts if its digits actually occur in
+    the clause it was extracted from — the deterministic guard against the
+    extractor hallucinating a number (e.g. reporting '50 टक्के' for a clause
+    that only ever says '100 टक्के'). Non-numeric values pass through: they
+    are legitimately paraphrased."""
+    tr = str.maketrans("०१२३४५६७८९", "0123456789")
+    strip = lambda s: re.sub(r"(?<=[0-9०-९]),(?=[0-9०-९])", "", s or "")  # noqa: E731
+    runs = {x.translate(tr) for x in
+            re.findall(r"[0-9०-९]+", strip(value))}
+    if not runs:
+        return True
+    text_runs = {x.translate(tr) for x in
+                 re.findall(r"[0-9०-९]+", strip(text))}
+    return runs <= text_runs
+
 EXPLAIN_PROMPT = """A draft Maharashtra Government Resolution contains a clause that conflicts with an existing GR. Explain the conflict precisely for a government drafting officer.
 
 DRAFT CLAUSE:
@@ -232,8 +249,11 @@ def review_draft(draft_text: str, top_k=6, max_draft_clauses=25, progress=None):
                 VERIFY_PROMPT.format(draft=p["draft"][:700], existing=p["candidate"][:700]),
                 temperature=0.0, max_tokens=512, json_mode=True)
             chk = json.loads(_json_slice(raw))
-            if chk.get("same_scheme") and _values_conflict(
-                    chk.get("value1", ""), chk.get("value2", "")):
+            if (chk.get("same_scheme")
+                    and _grounded(chk.get("value1", ""), p["draft"])
+                    and _grounded(chk.get("value2", ""), p["candidate"])
+                    and _values_conflict(
+                        chk.get("value1", ""), chk.get("value2", ""))):
                 v = {"label": "conflict",
                      "reason": f"For {chk.get('benefit') or 'the same benefit'}, "
                                f"the draft specifies '{chk.get('value1')}' but the "

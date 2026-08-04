@@ -399,7 +399,37 @@ def suggested_fix(c: dict) -> str:
             f"`{c['meta'].get('gr_code', '?')}` for this benefit.")
 
 
-def render_conflict_card(c: dict):
+def apply_fix_to_form(c: dict) -> bool:
+    """Deterministic one-click fix: substitute the draft's conflicting value
+    with the in-force value inside the ONE form clause that carries it, then
+    regenerate through the audited form rail. No LLM involved."""
+    vals = re.findall(r"'([^']+)'", c.get("reason") or "")
+    gf = st.session_state.get("gr_form")
+    if len(vals) < 2 or not gf:
+        return False
+    v1, v2 = vals[0], vals[1]
+    hits = [i for i, cl in enumerate(gf.get("clauses", [])) if v1 in cl]
+    if len(hits) != 1:
+        return False
+    from generate import generate_from_form
+    from scorecard import score
+    from glossary_check import check_terminology
+    gf = dict(gf)
+    gf["clauses"] = list(gf["clauses"])
+    gf["clauses"][hits[0]] = gf["clauses"][hits[0]].replace(v1, v2)
+    g_out = generate_from_form(gf)
+    if g_out.get("error") or not g_out.get("audit", {}).get("ok"):
+        return False
+    st.session_state["gr_form"] = g_out["form"]
+    st.session_state["generated"] = g_out
+    st.session_state["generated_score"] = score(g_out["draft"])
+    st.session_state["generated_terms"] = check_terminology(g_out["draft"])
+    st.session_state["send_generated"] = True
+    st.session_state["fix_applied"] = f"'{v1}' → '{v2}'"
+    return True
+
+
+def render_conflict_card(c: dict, ctx: str = "conf"):
     """One verified conflict as a bordered card — shared by the Conflicts tab
     and the generate flow's inline results."""
     m = c["meta"]
@@ -419,6 +449,20 @@ def render_conflict_card(c: dict):
         st.markdown(f"**Why it conflicts:** {c['reason']}")
         if fix := suggested_fix(c):
             st.markdown(fix)
+            # one-click deterministic fix — only when this draft came from the
+            # form rail, so the substitution can flow back through the audit
+            gf = st.session_state.get("gr_form")
+            vals = re.findall(r"'([^']+)'", c.get("reason") or "")
+            if (gf and st.session_state.get("send_generated") and len(vals) >= 2
+                    and sum(vals[0] in cl for cl in gf.get("clauses", [])) == 1):
+                if st.button(f"🔧 दुरुस्ती लागू करा — **{vals[1]}** प्रमाणे",
+                             key=f"fix_{ctx}_{m.get('gr_code', 'x')}_"
+                                 f"{c.get('draft_idx', 0)}"):
+                    if apply_fix_to_form(c):
+                        st.rerun()
+                    else:
+                        st.warning("दुरुस्ती आपोआप लागू करता आली नाही — "
+                                   "फॉर्ममध्ये हाताने बदला.")
         with st.expander("📝 Drafting-officer explanation"):
             st.markdown(c["explanation"])
 
@@ -718,6 +762,7 @@ with t_gen:
             c for c in fields["clauses"] if len(c.strip()) < MIN_CHARS]
         st.session_state["send_generated"] = True   # review box shows this draft
         st.session_state["generated_reviewed"] = bool(g_submit)
+        st.session_state.pop("fix_applied", None)   # fresh generation, fresh slate
         if g_submit:
             # the identical pipeline the Review button runs — one trail record
             # with source="generate+review" covers generation AND review (FR-15)
@@ -774,6 +819,16 @@ with t_gen:
                        "for full coverage.")
         if st.session_state.get("generated_reviewed"):
             r = st.session_state.get("review") or {}
+            if fixmsg := st.session_state.get("fix_applied"):
+                fc1, fc2 = st.columns([3, 1])
+                fc1.info(f"🔧 दुरुस्ती लागू: {fixmsg} — मसुदा पुन्हा तयार झाला; "
+                         "खालील conflict निकाल जुन्या मसुद्याचे आहेत.")
+                if fc2.button("🔁 पुन्हा तपासा", use_container_width=True,
+                              key="recheck_after_fix"):
+                    st.session_state.pop("fix_applied", None)
+                    run_full_review(st.session_state["generated"]["draft"],
+                                    top_k, source="generate+review")
+                    st.rerun()
             if "error" in r:
                 st.warning(f"Draft is ready, but the conflict check was unavailable: "
                            f"{r['error']} — re-run it any time from the review box above.")
@@ -786,7 +841,7 @@ with t_gen:
                     st.success("Conflict check — no conflicts flagged against the "
                                "indexed corpus.")
                 for c in r.get("conflicts", []):
-                    render_conflict_card(c)
+                    render_conflict_card(c, ctx="gen")
         st.text_area("Generated draft — it is also in the review box above; the "
                      "report header and tabs cover it like any reviewed draft",
                      g_out["draft"], height=340)
