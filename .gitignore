@@ -14,3 +14,4 @@ data/relabel_*.txt
 data/bulk_*.txt
 data/corpus_partial.jsonl
 data/audit_trail.jsonl
+data/gr_layout_check/
