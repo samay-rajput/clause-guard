@@ -22,8 +22,21 @@ from clients import GEMINI_MODEL, GROQ_MODEL, LLM_MODE, OLLAMA_MODEL  # noqa: E4
 from build_source_urls import links_for  # noqa: E402
 from trail import TRAIL_FILE, append_run, load_runs, to_csv  # noqa: E402
 from writer import draft_docx, draft_pdf, report_docx, report_pdf  # noqa: E402
+from gr_layout import gr_docx, gr_pdf, parse_draft  # noqa: E402
 from generate import SAMPLE, generate as generate_draft  # noqa: E402
 from chunk_clauses import MIN_CHARS  # noqa: E402
+
+
+@st.cache_data(show_spinner=False)
+def auth_exports(form_json: str):
+    """Authentic-format PDF + DOCX bytes, cached per serialized form (the
+    renderer's _normalize parses the ISO date string back)."""
+    form = json.loads(form_json)
+    return gr_pdf(form), gr_docx(form)
+
+
+def auth_form_json(form: dict) -> str:
+    return json.dumps(form, default=str, sort_keys=True, ensure_ascii=False)
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -240,11 +253,30 @@ if draft.strip():
     # as DOCX (Nirmala UI, Word shapes the Devanagari) or PDF (embedded Noto
     # fonts with harfbuzz shaping, so Marathi conjuncts render correctly).
     with st.expander("📤 Export — draft / review report as DOCX · PDF"):
+        # primary: the authentic government-GR layout, filename = the 18-digit
+        # code exactly like the portal's own PDFs
+        try:
+            gform = st.session_state.get("gr_form") or parse_draft(draft)
+            apdf, adocx = auth_exports(auth_form_json(gform))
+            acode = gform.get("code") or "clauseguard_gr"
+            a1, a2 = st.columns(2)
+            a1.download_button("📜 अस्सल शासकीय स्वरूप · PDF", apdf,
+                               file_name=f"{acode}.pdf", mime="application/pdf",
+                               use_container_width=True, type="primary",
+                               key="exp_auth_pdf",
+                               help="Authentic GR letterhead layout, calibrated "
+                                    "against a real portal GR")
+            a2.download_button("📜 अस्सल शासकीय स्वरूप · DOCX", adocx,
+                               file_name=f"{acode}.docx", mime=DOCX_MIME,
+                               use_container_width=True, key="exp_auth_docx")
+        except Exception as e:
+            st.caption(f"अस्सल स्वरूप unavailable for this draft ({e}) — plain "
+                       "exports below.")
         e1, e2, e3, e4 = st.columns(4)
-        e1.download_button("📄 Draft · DOCX", draft_docx(draft),
+        e1.download_button("📄 Draft · DOCX (plain)", draft_docx(draft),
                            file_name="clauseguard_draft.docx", mime=DOCX_MIME,
                            use_container_width=True)
-        e2.download_button("📄 Draft · PDF", draft_pdf(draft),
+        e2.download_button("📄 Draft · PDF (plain)", draft_pdf(draft),
                            file_name="clauseguard_draft.pdf", mime="application/pdf",
                            use_container_width=True)
         if st.session_state.get("score"):
@@ -719,12 +751,23 @@ with t_gen:
         m1.metric("Template compliance", f"{gs['pct']}%",
                   help="AC-3: a generated draft contains all mandatory sections")
         m2.metric("Terminology flags", gt["n_flags"])
-        m3.download_button("⬇️ DOCX", draft_docx(g_out["draft"]),
-                           file_name="clauseguard_generated_draft.docx",
-                           mime=DOCX_MIME, use_container_width=True)
-        m4.download_button("⬇️ PDF", draft_pdf(g_out["draft"]),
-                           file_name="clauseguard_generated_draft.pdf",
-                           mime="application/pdf", use_container_width=True)
+        try:
+            gform2 = st.session_state.get("gr_form") or parse_draft(g_out["draft"])
+            gpdf, gdocx = auth_exports(auth_form_json(gform2))
+            gcode = gform2.get("code") or "clauseguard_gr"
+            m3.download_button("⬇️ अस्सल DOCX", gdocx, file_name=f"{gcode}.docx",
+                               mime=DOCX_MIME, use_container_width=True,
+                               key="gen_auth_docx")
+            m4.download_button("⬇️ अस्सल PDF", gpdf, file_name=f"{gcode}.pdf",
+                               mime="application/pdf", use_container_width=True,
+                               key="gen_auth_pdf")
+        except Exception:
+            m3.download_button("⬇️ DOCX", draft_docx(g_out["draft"]),
+                               file_name="clauseguard_generated_draft.docx",
+                               mime=DOCX_MIME, use_container_width=True)
+            m4.download_button("⬇️ PDF", draft_pdf(g_out["draft"]),
+                               file_name="clauseguard_generated_draft.pdf",
+                               mime="application/pdf", use_container_width=True)
         if short := st.session_state.get("generated_short"):
             st.caption(f"⚠️ {len(short)} operative clause(s) shorter than {MIN_CHARS} "
                        "characters — too short for conflict screening. Lengthen them "
