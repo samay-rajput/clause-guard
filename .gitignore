@@ -27,3 +27,10 @@ data/*.log
 # the frozen demo baseline is a gate, not scratch output — `data/warm_*.txt`
 # above would otherwise swallow it
 !data/warm_mahgrs.txt
+
+# round-3 API runtime state
+data/users.db
+data/api_jwt_secret.key
+data/audit_trail_*.jsonl
+data/pairs_regen.log
+.venv_embed/
