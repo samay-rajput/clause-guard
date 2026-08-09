@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("CG_DRAFTER_PW", "apptest-drafter-pw")
 os.environ.setdefault("CG_REVIEWER_PW", "apptest-reviewer-pw")
+# scratch users DB — the test must never seed the real data/users.db
+os.environ["CG_USERS_DB"] = str(ROOT / "data" / "users_apptest.db")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

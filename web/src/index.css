@@ -1,0 +1,64 @@
+@import "@fontsource/mukta/400.css";
+@import "@fontsource/mukta/500.css";
+@import "@fontsource/mukta/600.css";
+@import "@fontsource/mukta/700.css";
+@import "@fontsource/noto-sans-devanagari/400.css";
+@import "@fontsource/noto-sans-devanagari/600.css";
+@import "tailwindcss";
+
+@theme {
+  /* government-adjacent editorial palette: paper, ink, navy, gold, maroon */
+  --color-paper: #f8f5ef;
+  --color-card: #fffdf9;
+  --color-ink: #1c2433;
+  --color-muted: #5c6678;
+  --color-navy: #1b2a4a;
+  --color-navy-soft: #24365c;
+  --color-gold: #b08a2e;
+  --color-gold-soft: #f3ead2;
+  --color-maroon: #7a2e2e;
+  --color-ok: #1e6b45;
+  --color-ok-soft: #e4f1e9;
+  --color-warn: #8a6d1f;
+  --color-warn-soft: #f7efd8;
+  --color-bad: #8a3040;
+  --color-bad-soft: #f7e3e6;
+  --color-line: #e3dcd0;
+
+  --font-sans: "Mukta", "Noto Sans Devanagari", "Noto Sans", ui-sans-serif,
+    system-ui, sans-serif;
+
+  --shadow-card: 0 1px 2px rgb(28 36 51 / 0.05), 0 4px 16px rgb(28 36 51 / 0.06);
+}
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* Devanagari matras clip below ~1.6 line-height — keep body text generous */
+body {
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-gold-soft);
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.rise { animation: rise 0.35s ease-out both; }
+
+@keyframes barfill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.barfill { transform-origin: left; animation: barfill 0.8s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rise, .barfill { animation: none; }
+}

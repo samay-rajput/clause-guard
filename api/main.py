@@ -65,8 +65,18 @@ def health():
     return out
 
 
-# React production build — mounted last so /api keeps priority; html=True
-# gives the SPA its index.html fallback for client-side routes.
+# React production build. StaticFiles(html=True) does NOT fall back to
+# index.html for client-side routes like /login — the catch-all below does.
+# It is registered after every router, so /api/* keeps priority.
 _dist = ROOT / "web" / "dist"
 if _dist.exists():
-    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="spa")
+    from fastapi.responses import FileResponse
+
+    app.mount("/assets", StaticFiles(directory=str(_dist / "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str):
+        f = _dist / full_path
+        if full_path and ".." not in full_path and f.is_file():
+            return FileResponse(f)
+        return FileResponse(_dist / "index.html")

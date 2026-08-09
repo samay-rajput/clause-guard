@@ -18,7 +18,9 @@ CORS_ORIGINS = [o for o in os.environ.get(
 
 UPLOAD_MAX_BYTES = int(os.environ.get("CG_UPLOAD_MAX_BYTES", str(5 * 1024 * 1024)))
 
-USERS_DB = DATA_DIR / "users.db"
+from pathlib import Path as _Path
+
+USERS_DB = _Path(os.environ.get("CG_USERS_DB", DATA_DIR / "users.db"))
 _SECRET_FILE = DATA_DIR / "api_jwt_secret.key"
 
 
