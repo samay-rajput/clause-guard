@@ -20,6 +20,15 @@ from chunk_clauses import chunk  # noqa: E402
 
 # e5-small cosine distances compress to ~[0.10, 0.25] on this index: related
 # clauses measure <=0.16, off-topic >=0.18 (calibrated live). 0.18 is the cut.
+#
+# The cut still holds on the clean-text corpus — what changed is DEPTH. Clean
+# clauses are ~13% longer and near-neighbours cluster tighter, so a genuine
+# conflict partner can sit at rank 7-9 while still measuring 0.14. Measured on
+# the four planted drafts: top_k=6 loses the Scenario C2 anchor
+# 202403271818429322 entirely (it retrieves at d=0.1428, rank 9); top_k=8
+# recovers it with no margin; top_k=10 recovers it with margin, at 189 candidate
+# pairs across all four scenarios instead of 113. MuRIL screens all of them
+# locally, so the extra depth costs milliseconds, not LLM calls.
 MAX_COSINE_DISTANCE = 0.18
 
 # Boilerplate detection is shared with the pair miners — lives in quality.py.
@@ -109,6 +118,20 @@ CLAUSE 2 (existing): {existing}
 Output ONLY JSON: {{"same_scheme": true|false, "benefit": "...", "value1": "...", "value2": "..."}}"""
 
 
+def _script(s: str) -> str:
+    """'mr' if the string's letters are mostly Devanagari, 'en' if mostly Latin,
+    'mixed' when neither dominates (an acronym in a Marathi phrase stays 'mr')."""
+    dev = sum(1 for c in s if "ऀ" <= c <= "ॿ")
+    lat = sum(1 for c in s if c.isascii() and c.isalpha())
+    if not (dev or lat):
+        return "none"
+    if dev >= 3 * lat:
+        return "mr"
+    if lat >= 3 * dev:
+        return "en"
+    return "mixed"
+
+
 def _values_conflict(v1: str, v2: str) -> bool:
     """Compare extracted values in code: different digit-content = conflict."""
     # strip Indian-grouping commas first ('1,00,000' vs '100000' is the SAME
@@ -122,9 +145,44 @@ def _values_conflict(v1: str, v2: str) -> bool:
     n2 = {x.translate(tr).replace(",", "") for x in d2}
     if n1 and n2:
         return n1 != n2
-    # non-numeric values (authority/procedure): require textual disagreement
+    # Non-numeric values (authority/procedure) are compared as strings, which is
+    # only meaningful when both are written in the same script. A draft clause in
+    # English and a corpus clause in Marathi produce values that never share a
+    # substring even when they say precisely the same thing — "directly through
+    # the MahaDBT portal to Aadhaar-linked bank accounts" vs "सदर निधी थेट लाभ
+    # हस्तांतरणाद्वारे (DBT) लाभार्थ्यांच्या बँक खात्यामध्ये जमा करण्यात यावा" is agreement, not
+    # contradiction. Code cannot tell those apart across scripts, so it must not
+    # assert a conflict it has not actually established.
     a, b = (v1 or "").strip().lower(), (v2 or "").strip().lower()
-    return bool(a and b and a != b and a not in b and b not in a)
+    if not (a and b):
+        return False
+    if _script(a) != _script(b):
+        return False
+    return a != b and a not in b and b not in a
+
+
+# A financial year is a PERIOD LABEL, not a value. Government schemes are
+# re-sanctioned every year, so a GR releasing funds "सन 2025-26 या आर्थिक वर्षामध्ये"
+# does not contradict last year's GR releasing them for 2024-25 — it succeeds it,
+# which is what the reference tab's currency advisory is for. This only matches a
+# bare financial-year label: a real deadline ("दि.31.03.2025", "31 March 2025") is
+# not one, so genuine date/deadline conflicts still fire.
+_FY_WORD = r"(?:आर्थिक\s*वर्ष\S*|वित्तीय\s*वर्ष\S*|financial\s*year|f\.?\s*y\.?)"
+_FY_RANGE = r"[0-9०-९]{4}\s*[-–—]\s*[0-9०-९]{2,4}"
+_FY_LEAD = r"(?:सन\s*|for\s+|in\s+|during\s+|the\s+)?"
+_FY_TAIL = r"(?:मध्ये|पासून|साठी|करिता|अखेर|मधील)?"
+FY_LABEL_RE = re.compile(
+    # Marathi puts the year first ("सन 2025-26 या आर्थिक वर्षामध्ये"),
+    # English puts it last ("financial year 2025-26"). One of the two forms must
+    # be present — a bare "2025-26" is deliberately NOT a financial-year label.
+    rf"^\s*{_FY_LEAD}{_FY_RANGE}\s*(?:(?:या|चा|च्या|मधील)\s*)?{_FY_WORD}\s*{_FY_TAIL}\s*$"
+    rf"|^\s*{_FY_LEAD}{_FY_WORD}\s*{_FY_RANGE}\s*{_FY_TAIL}\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_financial_year_label(v: str) -> bool:
+    return bool(FY_LABEL_RE.match(v or ""))
 
 
 def _grounded(value: str, text: str) -> bool:
@@ -203,7 +261,7 @@ def explain_conflict(draft, existing, meta, reason):
     return llm_with_fallback(prompt, preferred="gemini", temperature=0.2, max_tokens=1024)
 
 
-def review_draft(draft_text: str, top_k=6, max_draft_clauses=25, progress=None):
+def review_draft(draft_text: str, top_k=10, max_draft_clauses=25, progress=None):
     """Full pipeline for the app. Returns dict with clauses, pairs, verdicts, conflicts."""
     clauses = chunk(draft_text)[:max_draft_clauses]
     pairs = []
@@ -249,11 +307,15 @@ def review_draft(draft_text: str, top_k=6, max_draft_clauses=25, progress=None):
                 VERIFY_PROMPT.format(draft=p["draft"][:700], existing=p["candidate"][:700]),
                 temperature=0.0, max_tokens=512, json_mode=True)
             chk = json.loads(_json_slice(raw))
-            if (chk.get("same_scheme")
-                    and _grounded(chk.get("value1", ""), p["draft"])
-                    and _grounded(chk.get("value2", ""), p["candidate"])
-                    and _values_conflict(
-                        chk.get("value1", ""), chk.get("value2", ""))):
+            v1, v2 = chk.get("value1", ""), chk.get("value2", "")
+            if _is_financial_year_label(v1) and _is_financial_year_label(v2) and v1 != v2:
+                v = {"label": "annual-reissue",
+                     "reason": f"same scheme, different financial year "
+                               f"('{v1}' vs '{v2}') — a re-sanction, not a conflict"}
+            elif (chk.get("same_scheme")
+                    and _grounded(v1, p["draft"])
+                    and _grounded(v2, p["candidate"])
+                    and _values_conflict(v1, v2)):
                 v = {"label": "conflict",
                      "reason": f"For {chk.get('benefit') or 'the same benefit'}, "
                                f"the draft specifies '{chk.get('value1')}' but the "

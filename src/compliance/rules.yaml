@@ -16,7 +16,8 @@ rules:
     weight: 2
   - id: date_line
     desc: "Date line present and parseable"
-    regex: "Date[d]?\\s*[:\\-. ]*\\s*\\d{1,2}|दिनांक\\s*[:\\-]?\\s*[0-9०-९]{1,2}"
+    # real GRs write दि.०७.१०.२०१७ as often as दिनांक:, and a minority use तारीख
+    regex: "Date[d]?\\s*[:\\-. ]*\\s*\\d{1,2}|दि(?:नांक)?\\s*[:\\-.]?\\s*[0-9०-९]{1,2}|तारीख\\s*[:\\-]?\\s*[0-9०-९]{1,2}"
     weight: 2
   - id: mantralaya
     desc: "Place of issue present (Mantralaya, Mumbai)"
@@ -35,8 +36,9 @@ rules:
     regex: "Government\\s+Resolution\\s*[:\\-]|शासन\\s*निर्णय"
     weight: 2
   - id: numbered_clauses
-    desc: "Operative part uses numbered clauses (1. 2. ...)"
-    regex: "^\\s*\\(?[12][.)]\\s+\\S"
+    desc: "Operative part uses numbered clauses (1. 2. ... / १. २. ...)"
+    # Marathi GRs number their clauses in Devanagari and often omit the space
+    regex: "^\\s*\\(?[12१२][.)]\\s*\\S"
     weight: 1
   - id: financial_sanction
     desc: "Financial sanction / expenditure block present"
@@ -52,5 +54,5 @@ rules:
     weight: 2
   - id: unique_code
     desc: "Computer/unique GR code present (18-digit)"
-    regex: "\\b20\\d{16}\\b"
+    regex: "\\b20\\d{16}\\b|२०[०-९]{16}"
     weight: 1

@@ -8,18 +8,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "src" / "ingest"))
+from corpus_path import default_corpus_path  # noqa: E402
+from devanagari import to_ascii_digits  # noqa: E402
 from extract_metadata import extract_citations  # noqa: E402
 
 
 def load_corpus(path=None):
     if path is None:
-        for name in ("corpus_clean.jsonl", "corpus.jsonl"):
-            p = ROOT / "data" / name
-            if p.exists():
-                path = p
-                break
-        else:
-            path = ROOT / "data" / "corpus.jsonl"
+        path = default_corpus_path()
     recs = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -28,10 +24,18 @@ def load_corpus(path=None):
 
 
 def _norm_ref(s: str) -> str:
-    """Normalise a formal GR reference string for fuzzy matching."""
-    s = s.lower()
+    """Normalise a formal GR reference string for fuzzy matching.
+
+    Devanagari digits are folded to ASCII and Devanagari letters are KEPT: a
+    clean Marathi file number (शिष्यवृ-२०२४/प्र.क्र.१०५/तांशि-४) is the only
+    identifier most GRs carry, and the old ASCII-only keep-set reduced 96% of
+    them to the empty string. The boilerplate words that open every reference
+    are dropped in both languages so they cannot dominate a substring match.
+    """
+    s = to_ascii_digits(s.lower())
     s = re.sub(r"\b(government|resolution|circular|no|dated|dt)\b", " ", s)
-    s = re.sub(r"[^a-z0-9]+", "", s)
+    s = re.sub(r"(शासन|निर्णय|परिपत्रक|शुध्दीपत्रक|ज्ञापन|क्रमांक|क्रमाांक|क्र|दिनांक|दि)", " ", s)
+    s = re.sub(r"[^a-z0-9ऀ-ॿ]+", "", s)
     return s
 
 

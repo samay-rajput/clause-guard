@@ -23,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "src" / "ingest"))
+from devanagari import to_ascii_digits  # noqa: E402
 from extract_metadata import extract_citations  # noqa: E402
 
 GT_FILE = ROOT / "data" / "citation_ground_truth.json"
@@ -50,12 +51,17 @@ def read_block(text: str) -> str:
 
 def recovered(sig, extracted: dict) -> bool:
     """A citation counts as recovered when one extracted string carries all of
-    its digit tokens (digits survive the font garble verbatim)."""
+    its digit tokens (digits survive the font garble verbatim).
+
+    Both sides are folded to ASCII digits first. The ground truth is annotated
+    in ASCII, while clean GR text prints the same file numbers in Devanagari —
+    without folding, every clean-text citation scores as a miss (0/20 measured).
+    """
     if not sig:
         return False
     for s in list(extracted["cited_refs"]) + list(extracted["cited_codes"]):
-        flat = re.sub(r"\s+", "", s)
-        if all(tok in flat for tok in sig):
+        flat = to_ascii_digits(re.sub(r"\s+", "", s))
+        if all(to_ascii_digits(tok) in flat for tok in sig):
             return True
     return False
 
@@ -104,8 +110,20 @@ def main():
         with pdfplumber.open(p) as pdf:
             return pdf.pages[0].extract_text() or ""
 
+    # Third population: the SAME 12 GRs as clean OCR'd text (mahGRs). Same
+    # hand-annotated ground truth, so this isolates the effect of the text
+    # source from the effect of the extractor.
+    def mahgrs_text(d):
+        sys.path.append(str(ROOT / "src" / "ingest"))
+        from mahgrs import gr_path, read_clean
+        p = gr_path(d["gr_code"])
+        return read_clean(p)["text"] if p else ""
+
     drafts = score([d for d in gt["clean_drafts"] if d["citations"]], draft_text)
     archived = score(gt["archived_grs"], gr_text)
+    clean_corpus_pop = None
+    if (ROOT / "data" / "mahgrs" / "GRs").exists():
+        clean_corpus_pop = score(gt["archived_grs"], mahgrs_text)
 
     out = {
         "acceptance_criterion": "SRS AC-1 — extract >= 80% of cited references from a GR preamble",
@@ -114,12 +132,16 @@ def main():
                              "under test, so scoring on them would be circular",
         "clean_drafts": drafts,
         "archived_grs": archived,
+        "same_grs_clean_text": clean_corpus_pop,
     }
     OUT_FILE.parent.mkdir(exist_ok=True)
     OUT_FILE.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    for name, r in (("clean drafts (the app's real input)", drafts),
-                    ("archived GRs (legacy-font garble)", archived)):
+    pops = [("clean drafts (the app's real input)", drafts),
+            ("archived GRs (legacy-font garble)", archived)]
+    if clean_corpus_pop:
+        pops.append(("same GRs, clean mahGRs text", clean_corpus_pop))
+    for name, r in pops:
         verdict = "PASS" if (r["recall"] or 0) >= 0.80 else "BELOW AC-1 TARGET"
         print(f"{name:38} recall {r['recall']:.2%}  "
               f"({r['n_recovered']}/{r['n_expected']} over {r['n_docs']} docs)  {verdict}")

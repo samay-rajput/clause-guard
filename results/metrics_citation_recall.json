@@ -137,5 +137,107 @@
         "missed": []
       }
     ]
+  },
+  "same_grs_clean_text": {
+    "n_docs": 12,
+    "n_expected": 20,
+    "n_recovered": 15,
+    "recall": 0.75,
+    "n_without_file_number": 3,
+    "per_doc": [
+      {
+        "id": "202205021432456422",
+        "expected": 1,
+        "recovered": 1,
+        "letters_excluded": 0,
+        "missed": []
+      },
+      {
+        "id": "202205091439349822",
+        "expected": 1,
+        "recovered": 1,
+        "letters_excluded": 0,
+        "missed": []
+      },
+      {
+        "id": "202302161157205108",
+        "expected": 1,
+        "recovered": 1,
+        "letters_excluded": 1,
+        "missed": []
+      },
+      {
+        "id": "202303031444284608",
+        "expected": 1,
+        "recovered": 1,
+        "letters_excluded": 1,
+        "missed": []
+      },
+      {
+        "id": "202303131210240208",
+        "expected": 1,
+        "recovered": 0,
+        "letters_excluded": 2,
+        "missed": [
+          "विभागाचा समक्रमांकाचा दि.25.11.2021 रोजीचा शासन निर्णय (no file number cited)"
+        ]
+      },
+      {
+        "id": "202303141455064708",
+        "expected": 5,
+        "recovered": 5,
+        "letters_excluded": 1,
+        "missed": []
+      },
+      {
+        "id": "202304111653109408",
+        "expected": 1,
+        "recovered": 1,
+        "letters_excluded": 0,
+        "missed": []
+      },
+      {
+        "id": "202401291459552508",
+        "expected": 1,
+        "recovered": 0,
+        "letters_excluded": 1,
+        "missed": [
+          "विभागाचा समक्रमांकाचा दि.31.10.2023 रोजीचा शासन निर्णय (no file number cited)"
+        ]
+      },
+      {
+        "id": "202402271742452721",
+        "expected": 4,
+        "recovered": 2,
+        "letters_excluded": 0,
+        "missed": [
+          "शासन निर्णय, शालेय शिक्षण व क्रीडा विभाग, क्र.पीआई-1094/704(नोंद)/प्राशि-1, दि.14.11.1994",
+          "शासन निर्णय, शालेय शिक्षण व क्रीडा विभाग, समक्रमांक, दि.22.11.2023 व दि.23.01.2024 (no file number cited)"
+        ]
+      },
+      {
+        "id": "202402281407410621",
+        "expected": 1,
+        "recovered": 1,
+        "letters_excluded": 0,
+        "missed": []
+      },
+      {
+        "id": "202402291853417221",
+        "expected": 1,
+        "recovered": 1,
+        "letters_excluded": 1,
+        "missed": []
+      },
+      {
+        "id": "202403011220405021",
+        "expected": 2,
+        "recovered": 1,
+        "letters_excluded": 1,
+        "missed": [
+          "शासन निर्णय क्र.राक्रीधो 1096/प्र.क्र.330/क्रीयुसे-1, दि.31/7/1997"
+        ]
+      }
+    ]
   }
 }

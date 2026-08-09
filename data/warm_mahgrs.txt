@@ -1,0 +1,4 @@
+1_fee_conflict_draft clauses=6 pairs=50 muril=12 conflicts=1 grs=202407191857335408
+2_stale_reference_draft clauses=6 pairs=50 muril=3 conflicts=0 grs=-
+3_broken_format_draft clauses=2 pairs=20 muril=0 conflicts=0 grs=-
+3_broken_format_FIXED clauses=9 pairs=69 muril=39 conflicts=0 grs=-
