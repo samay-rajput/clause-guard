@@ -37,6 +37,9 @@ export default function Studio() {
   const [review, setReview] = useState<FullReview | null>(null);
   const [autoMeta, setAutoMeta] = useState<any | null>(null);
   const [fixApplied, setFixApplied] = useState<string | null>(null);
+  const [useBrief, setUseBrief] = useState(false);
+  const [brief, setBrief] = useState("");
+  const [nClauses, setNClauses] = useState(3);
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -145,9 +148,21 @@ export default function Studio() {
     setFixApplied(null);
     setAutoMeta(null);
     try {
-      const out: Generated = await api.post("/api/generate", {
-        form: buildForm(), use_ai: false, record: !check,
-      });
+      // brief mode = the legacy officer's-brief expansion: flat fields, AI may
+      // write beyond the form, so no structured gr_form is claimed
+      const payload = useBrief
+        ? {
+            form: {
+              lang: draftLang, subject: fields.subject, department: fields.department,
+              gr_number: fields.gr_number, date: fields.date,
+              references: fields.references.split("\n").filter((r) => r.trim()),
+              background: "", clauses: [], budget_head: fields.budget_head,
+              signatory: fields.signatory, designation: fields.designation,
+            },
+            use_ai: true, brief, n_clauses: nClauses, record: !check,
+          }
+        : { form: buildForm(), use_ai: false, record: !check };
+      const out: Generated = await api.post("/api/generate", payload);
       setGenerated(out);
       setGrForm(out.form ?? null);
       setReview(null);
@@ -315,8 +330,32 @@ export default function Studio() {
           <div><Label>{t("date", uiLang)}</Label><Input type="date" value={fields.date} onChange={set("date")} /></div>
         </div>
         <div><Label>{t("references", uiLang)}</Label><Textarea rows={3} value={fields.references} onChange={set("references")} /></div>
-        <div><Label>{t("background", uiLang)}</Label><Textarea rows={3} value={fields.background} onChange={set("background")} /></div>
-        <div><Label>{t("opClauses", uiLang)}</Label><Textarea rows={5} value={fields.clauses} onChange={set("clauses")} /></div>
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input type="checkbox" checked={useBrief} onChange={(e) => setUseBrief(e.target.checked)} />
+          <span>🤖 {uiLang === "mr"
+            ? "AI-assist — थोडक्यात माहितीवरून प्रस्तावना व कलमे (अंक-लेखापरीक्षित)"
+            : "AI-assist — draft preamble & clauses from a brief (digit-audited)"}</span>
+        </label>
+        {useBrief ? (
+          <>
+            <div>
+              <Label>{uiLang === "mr" ? "अधिकाऱ्याची थोडक्यात माहिती" : "Officer's brief"}</Label>
+              <Textarea rows={4} value={brief} onChange={(e) => setBrief(e.target.value)}
+                placeholder="e.g. sanction a merit scholarship of Rs. 1,500 per month for the top 10% of polytechnic students, paid via MahaDBT, from academic year 2026-27" />
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <Label>{uiLang === "mr" ? "कलमे" : "Clauses"}</Label>
+              <input type="range" min={2} max={6} value={nClauses}
+                onChange={(e) => setNClauses(Number(e.target.value))} />
+              <b>{nClauses}</b>
+            </div>
+          </>
+        ) : (
+          <>
+            <div><Label>{t("background", uiLang)}</Label><Textarea rows={3} value={fields.background} onChange={set("background")} /></div>
+            <div><Label>{t("opClauses", uiLang)}</Label><Textarea rows={5} value={fields.clauses} onChange={set("clauses")} /></div>
+          </>
+        )}
         <div className="grid gap-3 md:grid-cols-3">
           <div><Label>{t("budgetHead", uiLang)}</Label><Input value={fields.budget_head} onChange={set("budget_head")} /></div>
           <div><Label>{t("signatory", uiLang)}</Label><Input value={fields.signatory} onChange={set("signatory")} /></div>

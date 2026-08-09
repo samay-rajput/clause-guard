@@ -83,6 +83,17 @@ export default function Dashboard() {
         </Card>
       )}
 
+      <Card className="p-4 text-sm leading-7 text-muted">
+        <div className="mb-1 font-semibold text-ink">ℹ️ ClauseGuard · MAHA-GR-ALIGN</div>
+        Reviews and drafts Maharashtra Government Resolutions against a corpus of real GRs
+        (clean Marathi text via <b>orgpedia/mahGRs</b> — OCR-based, defeating the legacy-font
+        corruption in the portal PDFs). Every retrieved GR links back to the government's own
+        PDF. <b>Honest evaluation:</b> fine-tuned MuRIL macro-F1 0.9134 (0.8957 leak-free) vs
+        lexical baseline 0.7754 and zero-shot 70B 0.6521; our own label-noise audit found ~26%
+        noise in synthetic labels — full numbers in EVAL_TABLE.md and DATASET_CARD.md.
+        VJTI AI Hackathon 2026 · Problem 1 · MIT license.
+      </Card>
+
       <Card className="p-4">
         <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
           🎬 {t("scenarios", lang)} <Badge tone="gold">cached · zero-cost</Badge>

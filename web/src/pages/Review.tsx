@@ -11,7 +11,29 @@ import { ConflictCard } from "../components/ConflictCard";
 import { ExportBar } from "../components/Exports";
 import { Funnel } from "../components/Funnel";
 import { RefsPanel, ScorePanel, TermsPanel } from "../components/ReviewPanels";
-import { Alert, Badge, Button, Card, Metric, Spinner, Tabs, Textarea } from "../components/ui";
+import { Alert, Badge, Button, Card, Input, Metric, Spinner, Tabs, Textarea } from "../components/ui";
+
+function GlossaryBrowser({ q, setQ }: { q: string; setQ: (v: string) => void }) {
+  const gloss = useQuery({
+    queryKey: ["glossary", q],
+    queryFn: () => api.get(`/api/glossary?q=${encodeURIComponent(q)}`),
+  });
+  return (
+    <Card className="grid gap-2 p-4">
+      <div className="text-sm font-semibold">📖 Glossary · परिभाषा-कोश</div>
+      <Input placeholder="🔎 filter (Marathi or English)" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="grid gap-1 text-sm md:grid-cols-2">
+        {(gloss.data?.terms ?? []).map((g: any, i: number) => (
+          <div key={i}>
+            <b>{g.mr}</b> · {g.en}
+            {g.note && <span className="text-xs text-muted"> — {g.note}</span>}
+          </div>
+        ))}
+      </div>
+      <div className="text-xs text-muted">{gloss.data?.n ?? 0} terms</div>
+    </Card>
+  );
+}
 
 export default function Review() {
   const lang = useApp((s) => s.lang);
@@ -24,6 +46,8 @@ export default function Review() {
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState("conflicts");
   const [warning, setWarning] = useState<string | null>(null);
+  const [topK, setTopK] = useState(10);
+  const [glossQ, setGlossQ] = useState("");
   const stepsEnd = useRef<HTMLDivElement>(null);
 
   const scenarios = useQuery({ queryKey: ["scenarios"], queryFn: () => api.get("/api/scenarios") });
@@ -46,7 +70,7 @@ export default function Review() {
     setSteps([]);
     setPrevPct(result?.score?.pct ?? null);
     try {
-      const { job_id } = await api.post("/api/review", { draft, top_k: 10 });
+      const { job_id } = await api.post("/api/review", { draft, top_k: topK });
       const res = await api.job<FullReview>(job_id, (msg) => setSteps((s) => [...s, msg]));
       setResult(res);
       setTab("conflicts");
@@ -102,6 +126,16 @@ export default function Review() {
                 onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])}
               />
             </label>
+            <select
+              className="rounded-lg border border-line bg-white px-2 py-1.5 text-sm"
+              value={topK}
+              title="Candidates per clause"
+              onChange={(e) => setTopK(Number(e.target.value))}
+            >
+              {[6, 8, 10, 12, 16].map((k) => (
+                <option key={k} value={k}>top-k {k}</option>
+              ))}
+            </select>
           </div>
         </div>
         <Textarea
@@ -177,7 +211,12 @@ export default function Review() {
             )}
             {tab === "refs" && <RefsPanel refs={result.refs} />}
             {tab === "score" && <ScorePanel score={result.score} prevPct={prevPct} />}
-            {tab === "terms" && <TermsPanel terms={result.terms} />}
+            {tab === "terms" && (
+              <div className="grid gap-4">
+                <TermsPanel terms={result.terms} />
+                <GlossaryBrowser q={glossQ} setQ={setGlossQ} />
+              </div>
+            )}
           </div>
 
           <Card className="p-4">

@@ -73,19 +73,46 @@ export function ExportBar({
           📜 {t("authenticDocx", lang)}
         </Button>
         {review?.score && (
-          <Button
-            variant="outline"
-            disabled={busy !== null}
-            onClick={() =>
-              grab(
-                "/api/export/report?fmt=pdf",
-                { score: review.score, terms: review.terms, refs: review.refs, review: review.review },
-                "report",
-              )
-            }
-          >
-            📋 {t("reportPdf", lang)}
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              disabled={busy !== null}
+              onClick={() =>
+                grab(
+                  "/api/export/report?fmt=pdf",
+                  { score: review.score, terms: review.terms, refs: review.refs, review: review.review },
+                  "report",
+                )
+              }
+            >
+              📋 {t("reportPdf", lang)}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={busy !== null}
+              onClick={() =>
+                grab(
+                  "/api/export/report?fmt=docx",
+                  { score: review.score, terms: review.terms, refs: review.refs, review: review.review },
+                  "report-docx",
+                )
+              }
+            >
+              📋 DOCX
+            </Button>
+          </>
+        )}
+        {draft && (
+          <>
+            <Button variant="ghost" disabled={busy !== null}
+              onClick={() => grab("/api/export/draft?fmt=pdf", { draft }, "plain-pdf")}>
+              📄 {lang === "mr" ? "साधा PDF" : "Plain PDF"}
+            </Button>
+            <Button variant="ghost" disabled={busy !== null}
+              onClick={() => grab("/api/export/draft?fmt=docx", { draft }, "plain-docx")}>
+              📄 {lang === "mr" ? "साधा DOCX" : "Plain DOCX"}
+            </Button>
+          </>
         )}
       </div>
       {err && <Alert tone="bad">{err}</Alert>}
