@@ -67,6 +67,8 @@ FOOTER_Y = 758.0
 RIGHT_X = PAGE_W - MARGIN_R        # 543
 
 SIGN_CX = 405.0                    # signature name/designation centre axis
+CLAUSE_TEXT_X = MARGIN_L + 22.0    # hanging indent for numbered clause bodies
+ANNEX_SEQ = {"mr": "अबकडइफ", "en": "ABCDEF"}
 
 DEV_DIGITS = str.maketrans("0123456789", "०१२३४५६७८९")
 
@@ -346,6 +348,70 @@ def _body_para(pdf, text: str, first_indent=0.0, align="J", markdown=False,
         pdf.set_y(pdf.get_y() + gap_after)
 
 
+def _numbered_clause(pdf, num: str, text: str, markdown=False):
+    """Numbered operative clause with a real hanging indent — continuation
+    lines align under the text start like real GRs, instead of falling back
+    to the left margin — and keep-together for the first two lines, so a
+    clause number can never strand alone at a page foot."""
+    _need(pdf, 2 * LINE_H_BODY)
+    _set_font(pdf)
+    y0 = pdf.get_y()
+    pdf.set_xy(MARGIN_L, y0)
+    pdf.cell(CLAUSE_TEXT_X - MARGIN_L, LINE_H_BODY, num)
+    pdf.set_left_margin(CLAUSE_TEXT_X)
+    pdf.set_xy(CLAUSE_TEXT_X, y0)
+    pdf.multi_cell(RIGHT_X - CLAUSE_TEXT_X, LINE_H_BODY, text, align="J",
+                   markdown=markdown)
+    pdf.set_left_margin(MARGIN_L)
+    pdf.set_x(MARGIN_L)
+    pdf.set_y(pdf.get_y() + PARA_GAP)
+
+
+def _clause_table(pdf, tbl: dict, T):
+    """Rate-schedule / allocation table inside the body — fpdf2's native table
+    handles page breaks; digits go through the same render-time Devanagari
+    policy as everything else."""
+    headers = [T(str(h)) for h in tbl.get("headers") or []]
+    rows = [[T(str(c)) for c in row] for row in tbl.get("rows") or []]
+    if not rows and not headers:
+        return
+    _set_font(pdf, "", SIZE_REFS)
+    with pdf.table(width=BODY_W, line_height=LINE_H_TIGHT, text_align="LEFT",
+                   first_row_as_headings=bool(headers), padding=2.5) as table:
+        if headers:
+            hr = table.row()
+            for h in headers:
+                hr.cell(h)
+        for row in rows:
+            r = table.row()
+            for c in row:
+                r.cell(str(c))
+    _set_font(pdf)
+    pdf.set_y(pdf.get_y() + PARA_GAP)
+
+
+def _annexures(pdf, lang: str, annexures: list, T):
+    """परिशिष्ट pages: each annexure starts on a fresh page with the
+    convention label, then paragraphs and tables."""
+    for j, ann in enumerate(annexures):
+        pdf.add_page()
+        label = ("परिशिष्ट-" if lang == "mr" else "Annexure-") \
+            + ANNEX_SEQ[lang][j % len(ANNEX_SEQ[lang])]
+        _set_font(pdf, "B", SIZE_TITLE)
+        pdf.set_x(MARGIN_L)
+        pdf.cell(BODY_W, LINE_H_BODY, label, align="C")
+        pdf.ln(LINE_H_BODY)
+        if ann.get("title"):
+            _set_font(pdf, "B")
+            pdf.set_x(MARGIN_L)
+            pdf.multi_cell(BODY_W, LINE_H_BODY, T(str(ann["title"])), align="C")
+        pdf.set_y(pdf.get_y() + PARA_GAP)
+        for para in ann.get("paras") or []:
+            _body_para(pdf, T(str(para)), first_indent=FIRST_INDENT)
+        for tbl in ann.get("tables") or []:
+            _clause_table(pdf, tbl, T)
+
+
 def _signature(pdf, lang: str, signatory: str, designation: str):
     t = L10N[lang]
     _need(pdf, 5 * LINE_H_BODY + 60)
@@ -420,15 +486,21 @@ def _render_gr(form: dict, total_pages=None) -> _GRPDF:
         _body_para(pdf, T(para), first_indent=FIRST_INDENT)
 
     _label_line(pdf, t["resolution"])
+    tables_by_clause = {}
+    for tbl in form.get("tables") or []:
+        tables_by_clause.setdefault(int(tbl.get("after_clause") or 0), []).append(tbl)
     for i, clause in enumerate(f["clauses"], 1):
-        _body_para(pdf, T(f"{i}. {clause}"))
+        _numbered_clause(pdf, T(f"{i}."), T(clause))
+        for tbl in tables_by_clause.get(i, []):
+            _clause_table(pdf, tbl, T)
     # availability paragraph = the final numbered clause of a real GR, with the
     # blue clickable URL; the only paragraph rendered in markdown mode
     avail = t["avail"].format(code=T(f["code"]))
-    _body_para(pdf, T(f"{len(f['clauses']) + 1}. ") + avail, markdown=True)
+    _numbered_clause(pdf, T(f"{len(f['clauses']) + 1}."), avail, markdown=True)
 
     _signature(pdf, lang, T(f["signatory"]), T(f["designation"]))
     _copy_to(pdf, lang, f["copy_to"])
+    _annexures(pdf, lang, form.get("annexures") or [], T)
     return pdf
 
 
@@ -771,14 +843,44 @@ def gr_docx(form: dict) -> bytes:
         _para(doc, T(para), align=AL.JUSTIFY, first_line_indent=FIRST_INDENT,
               space_after=PARA_GAP)
 
-    # शासन निर्णय
+    # शासन निर्णय — hanging indent matches the PDF (number, tab, body; wrapped
+    # lines align under the body start)
     _para(doc, t["resolution"], bold=True, line_exact=LINE_H_BODY)
+    _hang = CLAUSE_TEXT_X - MARGIN_L
+
+    def _docx_clause_tables(idx):
+        for tbl in (form.get("tables") or []):
+            if int(tbl.get("after_clause") or 0) != idx:
+                continue
+            headers = tbl.get("headers") or []
+            rows = tbl.get("rows") or []
+            dt = doc.add_table(rows=0, cols=max(1, len(headers) or
+                                                (len(rows[0]) if rows else 1)))
+            dt.style = "Table Grid"
+            if headers:
+                hr = dt.add_row().cells
+                for k, h in enumerate(headers):
+                    r = hr[k].paragraphs[0].add_run(T(str(h)))
+                    _run_sz_cs(r, SIZE_REFS)
+                    _bold_cs(r)
+            for row in rows:
+                cells = dt.add_row().cells
+                for k, c in enumerate(row[:len(dt.columns)]):
+                    r = cells[k].paragraphs[0].add_run(T(str(c)))
+                    _run_sz_cs(r, SIZE_REFS)
+            doc.add_paragraph()
+
     for i, clause in enumerate(f["clauses"], 1):
-        _para(doc, T(f"{i}. {clause}"), align=AL.JUSTIFY, space_after=PARA_GAP)
+        p = _para(doc, align=AL.JUSTIFY, space_after=PARA_GAP,
+                  left_indent=_hang, first_line_indent=-_hang, tabs=(_hang,))
+        run = p.add_run(T(f"{i}.") + "\t" + T(clause))
+        _run_sz_cs(run, SIZE_BODY)
+        _docx_clause_tables(i)
     avail_pre, avail_post = t["avail"].split(
         "[www.maharashtra.gov.in](https://www.maharashtra.gov.in)")
-    ap = _para(doc, align=AL.JUSTIFY, space_after=PARA_GAP)
-    run = ap.add_run(T(f"{len(f['clauses']) + 1}. ") + T(avail_pre))
+    ap = _para(doc, align=AL.JUSTIFY, space_after=PARA_GAP,
+               left_indent=_hang, first_line_indent=-_hang, tabs=(_hang,))
+    run = ap.add_run(T(f"{len(f['clauses']) + 1}.") + "\t" + T(avail_pre))
     _run_sz_cs(run, SIZE_BODY)
     _add_hyperlink(ap, "www.maharashtra.gov.in", "https://www.maharashtra.gov.in")
     run = ap.add_run(T(avail_post.format(code=T(f["code"]))))
@@ -802,6 +904,35 @@ def gr_docx(form: dict) -> bytes:
                       tabs=(COPY_TEXT_X - MARGIN_L,))
             run = p.add_run(T(f"{i})") + "\t" + T(entry))
             _run_sz_cs(run, SIZE_COPY)
+
+    # परिशिष्ट pages — same content model as the PDF renderer
+    for j, ann in enumerate(form.get("annexures") or []):
+        doc.add_page_break()
+        label = ("परिशिष्ट-" if lang == "mr" else "Annexure-") \
+            + ANNEX_SEQ[lang][j % len(ANNEX_SEQ[lang])]
+        _para(doc, label, align=AL.CENTER, bold=True, size=SIZE_TITLE)
+        if ann.get("title"):
+            _para(doc, T(str(ann["title"])), align=AL.CENTER, bold=True)
+        for para in ann.get("paras") or []:
+            _para(doc, T(str(para)), align=AL.JUSTIFY,
+                  first_line_indent=FIRST_INDENT, space_after=PARA_GAP)
+        for tbl in ann.get("tables") or []:
+            headers = tbl.get("headers") or []
+            rows = tbl.get("rows") or []
+            dt = doc.add_table(rows=0, cols=max(1, len(headers) or
+                                                (len(rows[0]) if rows else 1)))
+            dt.style = "Table Grid"
+            if headers:
+                hr = dt.add_row().cells
+                for k, h in enumerate(headers):
+                    r = hr[k].paragraphs[0].add_run(T(str(h)))
+                    _run_sz_cs(r, SIZE_REFS)
+                    _bold_cs(r)
+            for row in rows:
+                cells = dt.add_row().cells
+                for k, c in enumerate(row[:len(dt.columns)]):
+                    r = cells[k].paragraphs[0].add_run(T(str(c)))
+                    _run_sz_cs(r, SIZE_REFS)
 
     buf = io.BytesIO()
     doc.save(buf)

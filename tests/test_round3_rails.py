@@ -150,5 +150,46 @@ marked = dict(BASE_FORM)
 marked["draft_marker"] = True
 check("explicit draft_marker forces watermark", _watermark_present(gr_pdf(marked)))
 
+# ---------- 7. formatting: tables, annexures, hanging indent ----------
+from gr_layout import gr_docx  # noqa: E402
+
+rich = dict(BASE_FORM)
+rich["clauses"] = [
+    "जिल्हानिहाय वितरण खालील तक्त्यात नमूद केल्याप्रमाणे करण्यात यावे व त्याप्रमाणे "
+    "संबंधित जिल्हाधिकारी यांनी अंमलबजावणीचा अहवाल शासनास सादर करावा असे "
+    "निर्देश देण्यात येत आहेत जेणेकरून सदर योजनेची प्रभावी अंमलबजावणी होईल.",
+]
+rich["tables"] = [{"after_clause": 1,
+                   "headers": ["जिल्हा", "रक्कम (लाख)", "लाभार्थी"],
+                   "rows": [["पुणे", "50", "1200"], ["नागपूर", "35", "900"],
+                            ["नाशिक", "25", "640"]]}]
+rich["annexures"] = [{"title": "जिल्हानिहाय सविस्तर वाटप",
+                      "paras": ["सदर परिशिष्टातील आकडेवारी संबंधित जिल्हा कार्यालयांनी "
+                                "प्रमाणित केली आहे."],
+                      "tables": [{"headers": ["क्र", "तपशील"],
+                                  "rows": [["1", "पहिला हप्ता"], ["2", "दुसरा हप्ता"]]}]}]
+
+pdf_bytes = gr_pdf(rich)
+with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+    n_pages = len(pdf.pages)
+    all_text = " ".join((p.extract_text() or "") for p in pdf.pages)
+check("annexure adds a page", n_pages >= 2, n_pages)
+check("table content renders", "पुणे" in all_text or "नागपूर" in all_text)
+# extraction of the Marathi label is unreliable (conjunct cid-mapping in the
+# subset font) — assert the label via the English rendering instead
+rich_en = dict(rich, lang="en", subject="Test grant distribution.",
+               department="School Education & Sports Department",
+               background="The matter was under consideration of the Government.",
+               clauses=["Approval is hereby accorded to the district-wise "
+                        "distribution shown in the table below."],
+               signatory="A.B.C.", designation="Deputy Secretary")
+with pdfplumber.open(io.BytesIO(gr_pdf(rich_en))) as pdf:
+    en_text = " ".join((p.extract_text() or "") for p in pdf.pages)
+check("annexure label renders", "Annexure-A" in en_text, en_text[-200:])
+
+docx_bytes = gr_docx(rich)
+check("DOCX with table+annexure builds", docx_bytes[:2] == b"PK" and
+      len(docx_bytes) > 10_000, len(docx_bytes))
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

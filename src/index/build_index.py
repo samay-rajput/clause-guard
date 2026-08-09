@@ -19,25 +19,33 @@ DB_DIR = db_dir()  # CG_DB_DIR lets a full-scale index be built beside the demo 
 MODEL_NAME = "intfloat/multilingual-e5-small"
 COLLECTION = "gr_clauses"
 
+import threading as _threading
+
 _model = None
+_model_lock = _threading.Lock()
 
 
 def model():
+    # locked: a server warm-up thread racing the first request through
+    # from_pretrained yields a half-initialized meta-device model
     global _model
-    if _model is None:
-        _model = SentenceTransformer(MODEL_NAME)
+    with _model_lock:
+        if _model is None:
+            _model = SentenceTransformer(MODEL_NAME)
     return _model
 
 
 _client = None
+_client_lock = _threading.Lock()
 
 
 def client():
     # one PersistentClient per process — retrieve() runs per draft clause and
     # a long-lived server must not reopen the sqlite/hnsw store on every query
     global _client
-    if _client is None:
-        _client = chromadb.PersistentClient(path=DB_DIR)
+    with _client_lock:
+        if _client is None:
+            _client = chromadb.PersistentClient(path=DB_DIR)
     return _client
 
 

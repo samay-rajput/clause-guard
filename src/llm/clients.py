@@ -158,11 +158,19 @@ def _groq(prompt, temperature, max_tokens, json_mode, model=None,
 
 
 def _ollama(prompt, temperature, max_tokens, json_mode):
+    options = {"temperature": temperature, "num_predict": max_tokens}
+    # CG_OLLAMA_NUM_GPU=0 forces CPU inference — the 4 GB laptop GPU can crash
+    # the runner ("terminated: CUDA error") on partial offload of llama3.1
+    if (ng := os.environ.get("CG_OLLAMA_NUM_GPU")) is not None:
+        try:
+            options["num_gpu"] = int(ng)
+        except ValueError:
+            pass
     payload = {
         "model": OLLAMA_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
-        "options": {"temperature": temperature, "num_predict": max_tokens},
+        "options": options,
     }
     if json_mode:
         payload["format"] = "json"
