@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "src" / "ingest"))
 from quality import DEV_WORD, is_boilerplate, readability  # noqa: E402
 
-OUT_MD = Path(r"C:\Users\samay\OneDrive\Desktop\hackathon ai\BLIND-CHECK-50.md")
+OUT_MD = Path(r"C:\Users\samay\OneDrive\Desktop\hackathon ai\5-plans-and-logs\BLIND-CHECK-50.md")
 OUT_KEY = ROOT / "data" / "blind_check_key.json"
 PER_LABEL = {"contradiction": 17, "consistent": 17, "neutral": 16}
 

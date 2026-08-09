@@ -256,6 +256,20 @@ def _need(pdf, h):
         pdf.add_page()
 
 
+def _topic_is_redundant(subject: str, topic: str) -> bool:
+    """The gold specimen carries a genuine second sub-heading below the rule
+    (`…देण्याबाबत.` then `थकीत वीज देयक तसेच…`), so the two-line block is real.
+    But the topic flow builds `subject` from `topic` by appending "…बाबत.", and
+    printing both then shows the same line twice. Suppress the second line only
+    when it adds nothing — compared ignoring whitespace and punctuation, since
+    the only difference is that suffix."""
+    def strip(s):
+        return re.sub(r"[\s.।,:;\-]+", "", s or "")
+
+    t, s = strip(topic), strip(subject)
+    return not t or t in s or s in t
+
+
 def _subject_block(pdf, subject: str, topic: str):
     _set_font(pdf, "B")
     pdf.set_left_margin(SUBJECT_X)
@@ -263,7 +277,7 @@ def _subject_block(pdf, subject: str, topic: str):
     pdf.multi_cell(SUBJECT_W, LINE_H_TIGHT, subject, align="J")
     pdf.set_fill_color(0, 0, 0)
     pdf.rect(SUBJECT_X, pdf.get_y() + 1.5, SUBJECT_RULE_W, 0.4, style="F")
-    if topic and topic != subject:
+    if topic and not _topic_is_redundant(subject, topic):
         pdf.set_y(pdf.get_y() + 3.5)
         pdf.multi_cell(SUBJECT_W, LINE_H_TIGHT, topic, align="J")
     pdf.set_left_margin(MARGIN_L)
@@ -694,7 +708,7 @@ def gr_docx(form: dict) -> bytes:
     sp = _para(doc, T(f["subject"]), align=AL.JUSTIFY, bold=True,
                left_indent=SUBJECT_X - MARGIN_L, line_exact=LINE_H_TIGHT)
     _p_border_bottom(sp)
-    if f["topic"] and f["topic"] != f["subject"]:
+    if f["topic"] and not _topic_is_redundant(f["subject"], f["topic"]):
         _para(doc, T(f["topic"]), align=AL.JUSTIFY, bold=True,
               left_indent=SUBJECT_X - MARGIN_L, line_exact=LINE_H_TIGHT)
 

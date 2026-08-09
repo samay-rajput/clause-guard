@@ -30,8 +30,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "src" / "draftgen"))
 sys.path.append(str(ROOT / "src" / "llm"))
+sys.path.append(str(ROOT / "src" / "ingest"))
 from generate import SAMPLE, _digit_runs, financial_year, unique_code  # noqa: E402
 from clients import LLMError, llm_with_fallback  # noqa: E402
+from devanagari import to_ascii_digits  # noqa: E402
 
 MAX_TOPIC_DISTANCE = 0.30      # topic queries sit farther out than clause pairs
 DEFAULT_DEPT = "08"
@@ -77,6 +79,104 @@ DEPARTMENTS = {
         "keywords": ["मागास", "अनुसूचित", "दिव्यांग", "सामाजिक न्याय", "वसतिगृह",
                      "विशेष सहाय्य", "निवृत्तिवेतन", "scheduled", "backward",
                      "hostel", "disability", "pension"],
+    },
+    # --- the seven scholarship-adjacent departments -------------------------
+    # Added with the mahGRs corpus (Aug 2026). Before this, every GR from these
+    # departments — 11,109 of 23,333, i.e. 48% — fell through to DEFAULT_DEPT and
+    # was drafted under Higher & Technical Education's name, desk and file
+    # grammar. Names, file prefixes, desks and directorates are the most frequent
+    # forms observed in each department's own GRs; budget heads are the major
+    # heads those GRs actually charge to (sub-major/minor/sub-head are
+    # scheme-specific and belong to the desk, so they are not invented here).
+    "24": {
+        "name": {"mr": "आदिवासी विकास विभाग", "en": "Tribal Development Department"},
+        "minister": {"mr": "आदिवासी विकास", "en": "Tribal Development"},
+        "file_prefix": {"mr": "आविवि", "en": "TDD"},
+        "desk": {"mr": "कार्यासन-6", "en": "Desk-6"},
+        "directorate": {"mr": "आयुक्त, आदिवासी विकास आयुक्तालय, महाराष्ट्र राज्य, नाशिक",
+                        "en": "Commissioner, Tribal Development Commissionerate, "
+                              "Maharashtra State, Nashik"},
+        "budget_heads": ["2225", "2401"],
+        "keywords": ["आदिवासी", "अनुसूचित जमाती", "आश्रमशाळा", "वसतीगृह", "स्वयंम",
+                     "tribal", "ashram school"],
+    },
+    "34": {
+        "name": {"mr": "इतर मागास बहुजन कल्याण विभाग",
+                 "en": "Other Backward Bahujan Welfare Department"},
+        "minister": {"mr": "इतर मागास बहुजन कल्याण", "en": "Other Backward Bahujan Welfare"},
+        "file_prefix": {"mr": "इमाव", "en": "OBC"},
+        "desk": {"mr": "योजना-1", "en": "Plan-1"},
+        "directorate": {"mr": "संचालक, इतर मागास बहुजन कल्याण संचालनालय, महाराष्ट्र राज्य, पुणे",
+                        "en": "Director, Other Backward Bahujan Welfare Directorate, "
+                              "Maharashtra State, Pune"},
+        "budget_heads": ["2225"],
+        "keywords": ["इतर मागासवर्ग", "विमुक्त जाती", "भटक्या जमाती", "विशेष मागास प्रवर्ग",
+                     "ज्ञानज्योती", "धनगर", "obc", "nomadic"],
+    },
+    "14": {
+        "name": {"mr": "अल्पसंख्याक विकास विभाग", "en": "Minorities Development Department"},
+        "minister": {"mr": "अल्पसंख्याक विकास", "en": "Minorities Development"},
+        "file_prefix": {"mr": "अविवि", "en": "MDD"},
+        "desk": {"mr": "का-9", "en": "Desk-9"},
+        "directorate": {"mr": "आयुक्त, अल्पसंख्याक आयुक्तालय, छत्रपती संभाजीनगर",
+                        "en": "Commissioner, Minorities Commissionerate, "
+                              "Chhatrapati Sambhajinagar"},
+        "budget_heads": ["2235"],
+        "keywords": ["अल्पसंख्याक", "मदरसा", "हज", "उर्दू", "वक्फ", "minority", "madrasa"],
+    },
+    "35": {
+        # renamed from दिव्यांग कल्याण विभाग; older GRs still sign under सा.न्या.
+        "name": {"mr": "दिव्यांग सक्षमीकरण विभाग", "en": "Divyang Empowerment Department"},
+        "minister": {"mr": "दिव्यांग कल्याण", "en": "Divyang Welfare"},
+        "file_prefix": {"mr": "दिव्यांग", "en": "EDD"},
+        "desk": {"mr": "दि.क.1", "en": "DE-1"},
+        "directorate": {"mr": "आयुक्त, दिव्यांग सक्षमीकरण आयुक्तालय, महाराष्ट्र राज्य, पुणे",
+                        "en": "Commissioner, Divyang Empowerment Commissionerate, "
+                              "Maharashtra State, Pune"},
+        "budget_heads": ["2235"],
+        "keywords": ["दिव्यांग", "अपंग", "सक्षमीकरण", "कर्णबधीर", "अंध", "divyang"],
+    },
+    "03": {
+        # renamed twice; the current form is used from ~2023 onward
+        "name": {"mr": "कौशल्य, रोजगार, उद्योजकता व नाविन्यता विभाग",
+                 "en": "Skill, Employment, Entrepreneurship and Innovation Department"},
+        "minister": {"mr": "कौशल्य, रोजगार, उद्योजकता व नाविन्यता",
+                     "en": "Skill, Employment, Entrepreneurship and Innovation"},
+        "file_prefix": {"mr": "कौविउ", "en": "SED"},
+        "desk": {"mr": "व्यशि-1", "en": "VE-1"},
+        "directorate": {"mr": "संचालक, व्यवसाय शिक्षण व प्रशिक्षण संचालनालय, "
+                              "महाराष्ट्र राज्य, मुंबई",
+                        "en": "Director, Vocational Education and Training, "
+                              "Maharashtra State, Mumbai"},
+        "budget_heads": ["2230", "2225"],
+        "keywords": ["कौशल्य", "आयटीआय", "औद्योगिक प्रशिक्षण", "रोजगार", "उद्योजकता",
+                     "अप्रेंटिस", "skill", "iti", "apprentice"],
+    },
+    "13": {
+        "name": {"mr": "वैद्यकीय शिक्षण व औषधी द्रव्ये विभाग",
+                 "en": "Medical Education and Drugs Department"},
+        "minister": {"mr": "वैद्यकीय शिक्षण", "en": "Medical Education"},
+        "file_prefix": {"mr": "वैशिवि", "en": "MED"},
+        "desk": {"mr": "शिक्षण-2", "en": "Edu-2"},
+        "directorate": {"mr": "आयुक्त, वैद्यकीय शिक्षण व संशोधन संचालनालय, मुंबई",
+                        "en": "Commissioner, Directorate of Medical Education and "
+                              "Research, Mumbai"},
+        "budget_heads": ["2210", "4210"],
+        "keywords": ["वैद्यकीय", "एमबीबीएस", "बीडीएस", "रुग्णालय", "आरोग्य विज्ञान",
+                     "औषधी", "medical", "mbbs"],
+    },
+    "30": {
+        "name": {"mr": "महिला व बाल विकास विभाग",
+                 "en": "Women and Child Development Department"},
+        "minister": {"mr": "महिला व बाल विकास", "en": "Women and Child Development"},
+        "file_prefix": {"mr": "एबावि", "en": "WCD"},
+        "desk": {"mr": "का.6", "en": "Desk-6"},
+        "directorate": {"mr": "आयुक्त, महिला व बाल विकास आयुक्तालय, महाराष्ट्र राज्य, पुणे",
+                        "en": "Commissioner, Women and Child Development "
+                              "Commissionerate, Maharashtra State, Pune"},
+        "budget_heads": ["2235", "2236"],
+        "keywords": ["अंगणवाडी", "बालगृह", "महिला", "बाल विकास", "पोषण", "स्वाधारगृह",
+                     "सखी", "anganwadi", "women"],
     },
 }
 
@@ -303,7 +403,12 @@ def scrub_unsourced_digits(text: str, allowed: set) -> tuple:
         if runs and not runs <= allowed:
             removed.append(m.group(0))
             return "____"
-        return m.group(0)
+        # A sourced number may still arrive in Devanagari — clean precedent
+        # subjects are full of them and the AI copies the script it sees. The
+        # canonical draft stays ASCII (gr_layout converts at render time, and
+        # only for Marathi), so fold here rather than let Devanagari numerals
+        # reach the English PDF and the form digit audit.
+        return to_ascii_digits(m.group(0))
 
     return _DIGIT_RUN_RE.sub(sub, text or ""), removed
 

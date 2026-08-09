@@ -25,6 +25,7 @@ from writer import draft_docx, draft_pdf, report_docx, report_pdf  # noqa: E402
 from gr_layout import gr_docx, gr_pdf, parse_draft  # noqa: E402
 from generate import SAMPLE, generate as generate_draft  # noqa: E402
 from chunk_clauses import MIN_CHARS  # noqa: E402
+from corpus_path import default_corpus_path  # noqa: E402
 
 
 @st.cache_data(show_spinner=False)
@@ -96,12 +97,9 @@ SCENARIOS = {
 
 
 def _corpus_file():
-    # prefer the LLM-cleaned corpus when it exists
-    for name in ("corpus_clean.jsonl", "corpus.jsonl"):
-        p = ROOT / "data" / name
-        if p.exists():
-            return p
-    return None
+    # explicit selection only — CG_CORPUS, then data/corpus.active, then the default
+    p = default_corpus_path()
+    return p if p.exists() else None
 
 
 @st.cache_data
@@ -118,6 +116,20 @@ def load_glossary():
 
 _cf = _corpus_file()
 corpus = load_corpus_cached(str(_cf), _cf.stat().st_mtime) if _cf else []
+
+# A corpus and an index that disagree is the worst failure mode this app has: it
+# would answer from one and cite the other, silently. bootstrap.py checks only
+# that the artifact files exist, so the index carries a fingerprint of the corpus
+# it was built from and we compare it here.
+if _cf:
+    try:
+        from build_index import check_against_corpus  # noqa: E402
+        _mismatch = check_against_corpus(_cf)
+        if _mismatch:
+            st.error(f"⚠️ Corpus/index mismatch — {_mismatch}. "
+                     "Retrieval results will not match the corpus shown.")
+    except Exception:
+        pass
 
 # ---------- sidebar ----------
 with st.sidebar:
@@ -148,7 +160,7 @@ with st.sidebar:
 
     with st.expander("⚙️ Advanced"):
         # default matches the pipeline / warm-cache default so demo runs stay cached
-        top_k = st.slider("Candidates per clause", 2, 8, 6)
+        top_k = st.slider("Candidates per clause", 2, 16, 10)
 
 def read_upload(f) -> str:
     """Text of an uploaded draft (FR-13). PDFs reuse pdfplumber — already the
@@ -645,6 +657,54 @@ with t_gen:
             except Exception as e:
                 status.update(label=f"प्रीफिल अयशस्वी — फॉर्म रिकामाच ठेवला: {e}",
                               state="error")
+    # ---- one-click autonomous path: topic → authentic GR, nothing reviewed ----
+    if st.button("⚡ स्वयंचलित मसुदा — विषय ते अस्सल GR, मानवी हस्तक्षेपाशिवाय · "
+                 "Autonomous draft (no human in the loop)",
+                 use_container_width=True, disabled=not g_topic.strip(),
+                 key="auto_draft_btn",
+                 help="Topic → precedent GRs → AI prose → sourced-or-blank scrub "
+                      "→ deterministic render → authentic GR PDF. No field is "
+                      "reviewed or edited."):
+        from autodraft import draft_gr
+        res = None
+        with st.status("स्वयंचलित मसुदा तयार करत आहे…", expanded=False) as status:
+            try:
+                res = draft_gr(g_topic, lang, corpus=corpus,
+                               progress=lambda m: status.update(label=m))
+                status.update(
+                    label=("मसुदा तयार — मानवी हस्तक्षेपाशिवाय"
+                           if res.get("ok") else "स्वयंचलित मसुदा अयशस्वी"),
+                    state="complete" if res.get("ok") else "error")
+            except Exception as e:
+                status.update(label=f"स्वयंचलित मसुदा अयशस्वी: {e}", state="error")
+        if res and res.get("ok"):
+            st.session_state["prefill"] = res["form"]
+            st.session_state["prefill_meta"] = {
+                k: res["meta"][k] for k in
+                ("ai_used", "ai_error", "scrubbed", "needs_numbers")}
+            st.session_state["gr_form"] = res["form"]
+            st.session_state["generated"] = {
+                "draft": res["draft"], "form": res["form"],
+                "audit": res["audit"], "ai_used": res["meta"]["ai_used"],
+                "ai_error": res["meta"]["ai_error"]}
+            st.session_state["generated_score"] = res["compliance"]
+            st.session_state["generated_terms"] = res["terminology"]
+            st.session_state["generated_short"] = [
+                c for c in (res["form"].get("clauses") or [])
+                if len(str(c).strip()) < MIN_CHARS]
+            st.session_state["send_generated"] = True
+            st.session_state["generated_reviewed"] = False
+            st.session_state["autodraft_meta"] = res["meta"]
+            st.session_state.pop("fix_applied", None)
+            try:
+                append_run(res["draft"], score=res["compliance"],
+                           terms=res["terminology"], source="autodraft")
+            except Exception as e:
+                st.session_state["audit_error"] = str(e)
+            st.rerun()
+        elif res:
+            st.error(f"स्वयंचलित मसुदा अयशस्वी — {res.get('error')} "
+                     f"{res.get('blanks') or ''}")
     if pf := st.session_state.get("prefill"):
         with st.container(border=True):
             st.caption(f"**पूर्वसंदर्भ · precedents** — विभाग ओळखला: "
@@ -743,6 +803,11 @@ with t_gen:
                        if pf_extras.get(k) is not None}
             gr_form.update(fields)
             gr_form["references"] = [{"text": r} for r in fields["references"]]
+            # the prose was written by the AI at PREFILL time, one step before
+            # this call — carry that through so the draft reports it truthfully
+            pf_meta = st.session_state.get("prefill_meta") or {}
+            gr_form["ai_used"] = bool(pf_meta.get("ai_used"))
+            gr_form["ai_error"] = pf_meta.get("ai_error")
             g_out = generate_from_form(gr_form)
             if g_out.get("error"):
                 st.error("फॉर्ममध्ये ____ रिकाम्या जागा आहेत — आधी भरा: "
@@ -763,6 +828,7 @@ with t_gen:
         st.session_state["send_generated"] = True   # review box shows this draft
         st.session_state["generated_reviewed"] = bool(g_submit)
         st.session_state.pop("fix_applied", None)   # fresh generation, fresh slate
+        st.session_state.pop("autodraft_meta", None)  # this one WAS human-reviewed
         if g_submit:
             # the identical pipeline the Review button runs — one trail record
             # with source="generate+review" covers generation AND review (FR-15)
@@ -776,9 +842,37 @@ with t_gen:
                 st.session_state["audit_error"] = str(e)
         st.rerun()   # re-render so the review box + report header show this draft
     if g_out := st.session_state.get("generated"):
+        if am := st.session_state.get("autodraft_meta"):
+            with st.container(border=True):
+                st.markdown("#### ⚡ मानवी हस्तक्षेपाशिवाय · drafted with no "
+                            "human in the loop")
+                st.markdown(
+                    f"विषय → **{len(am['precedents'])}** पूर्वसंदर्भ → विभाग "
+                    f"**{am['dept_code']}** → AI मजकूर → sourced-or-blank scrub "
+                    f"→ deterministic render → अस्सल GR, **{am['elapsed_s']}s** "
+                    "मध्ये. एकही फील्ड तपासले किंवा संपादित केले नाही.")
+                bits = ["🔒 अंक-लेखापरीक्षण उत्तीर्ण"
+                        if (g_out.get("audit") or {}).get("ok")
+                        else "⚠️ अंक-लेखापरीक्षण अयशस्वी"]
+                if am["scrubbed"]:
+                    bits.append(f"🧹 {len(am['scrubbed'])} स्रोत नसलेल्या संख्या "
+                                "नाकारल्या")
+                if am["deferred_clauses"]:
+                    bits.append(f"🕐 {len(am['deferred_clauses'])} कलम स्वतंत्र "
+                                "आदेशाकडे वर्ग")
+                st.caption("  ·  ".join(bits))
+                for q in am["open_questions"]:
+                    st.caption(f"❓ ज्या संख्या अंदाजाने भरण्यास नकार दिला: {q}")
+                if am["degraded"]:
+                    st.caption("⚙️ degraded: " + ", ".join(am["degraded"]))
         if g_out["ai_used"]:
-            st.caption("🤖 Preamble and clauses drafted by the AI layer — "
-                       "digit audit passed against the brief.")
+            if g_out.get("form"):
+                st.caption("🤖 प्रस्तावना व कलमे AI ने लिहिली (विषयावरून, prefill "
+                           "टप्प्यावर) — प्रत्येक संख्या स्रोताशी पडताळली; अंतिम "
+                           "मसुदा फॉर्मवरून deterministic पद्धतीने रेंडर झाला.")
+            else:
+                st.caption("🤖 Preamble and clauses drafted by the AI layer — "
+                           "digit audit passed against the brief.")
         elif g_out["ai_error"]:
             st.warning(f"AI assist unavailable — deterministic scaffold used "
                        f"instead. ({g_out['ai_error']})")
@@ -806,7 +900,13 @@ with t_gen:
             m4.download_button("⬇️ अस्सल PDF", gpdf, file_name=f"{gcode}.pdf",
                                mime="application/pdf", use_container_width=True,
                                key="gen_auth_pdf")
-        except Exception:
+            st.session_state.pop("auth_export_error", None)
+        except Exception as e:
+            # surfaced rather than swallowed: a renderer failure here silently
+            # downgraded the authentic GR to a plain PDF and no test could see it
+            st.session_state["auth_export_error"] = f"{type(e).__name__}: {e}"
+            st.caption(f"अस्सल स्वरूप unavailable for this draft ({e}) — plain "
+                       "exports below.")
             m3.download_button("⬇️ DOCX", draft_docx(g_out["draft"]),
                                file_name="clauseguard_generated_draft.docx",
                                mime=DOCX_MIME, use_container_width=True)
@@ -913,14 +1013,18 @@ with t_about:
         components.html(slide.read_text(encoding="utf-8"), height=560, scrolling=False)
     st.markdown(
         """
-**ClauseGuard** (Problem 1: MAHA-GR-ALIGN) reviews a draft Maharashtra Government Resolution against a corpus of
-real GRs (archival copies via the Wayback Machine — the live portal returned 503 during
-the hackathon window).
+**ClauseGuard** (Problem 1: MAHA-GR-ALIGN) reviews a draft Maharashtra Government Resolution
+against a corpus of real GRs. The corpus text now comes from **orgpedia/mahGRs**, whose
+pipeline OCRs the portal PDFs instead of reading their text layer — which is what defeats
+the legacy-font corruption in the originals. Every GR remains verifiable against the
+government's own PDF through the source link on each card.
 
 **Honest evaluation**: fine-tuned macro-F1 0.9134 (0.8957 on the leak-free subset) vs a
 protocol-matched lexical baseline (0.7754) and zero-shot Llama-70B (0.6521). We also
 blind-checked our own labels (~26% noise found in the synthetic C/S classes) and report
 accuracy against adjudicated truth — see `EVAL_TABLE.md` and `DATASET_CARD.md`.
+Those numbers were measured on the earlier archival-text corpus; the screening model has
+not yet been re-fine-tuned on clean text.
 
 Built for VJTI AI Hackathon 2026 · Problem 1 · "Shaping Digital Governance" · MIT license.
         """

@@ -67,15 +67,14 @@ Output ONLY JSON: {{"items": [{{"hypothesis": "..."}}]}}""",
 
 def load_seed_clauses(min_len=120, max_len=900, min_doc_quality=0.14):
     """Seed only from the cleanest-extracting docs — garbled seeds would poison
-    the dataset (prefers corpus_clean.jsonl when the LLM repair pass has run)."""
-    corpus = None
-    for name in ("corpus_clean.jsonl", "corpus.jsonl"):
-        p = ROOT / "data" / name
-        if p.exists():
-            corpus = p
-            break
+    the dataset. Which corpus counts as active is resolved explicitly (CG_CORPUS
+    / data/corpus.active); the quality gates below were calibrated against the
+    garbled distribution and barely bind on clean text — see DATASET_CARD.md."""
     sys.path.append(str(ROOT / "src" / "ingest"))
+    from corpus_path import default_corpus_path
     from quality import readability
+
+    corpus = default_corpus_path()
     seeds = []
     with open(corpus, encoding="utf-8") as f:
         for line in f:

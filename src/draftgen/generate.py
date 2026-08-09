@@ -245,26 +245,37 @@ def form_digit_audit(form: dict, draft_text: str) -> dict:
             "dropped": sorted(must_appear - produced)}
 
 
-def generate_from_form(form: dict) -> dict:
+def generate_from_form(form: dict, *, allow_blanks: bool = False) -> dict:
     """Deterministic generation from a user-approved GRForm — the topic flow's
     render rail. Blocks on unfilled ____ blanks; audits the result. The form's
     `code` is pinned to what build_draft embeds, so the authentic renderer and
-    the canonical text always agree."""
+    the canonical text always agree.
+
+    `allow_blanks=True` is used ONLY by the autonomous drafter's "keep" policy
+    (src/draftgen/autodraft.py), which deliberately renders the blanks so a
+    reader sees exactly which figures the system refused to invent. Every other
+    caller keeps the refusal, so the interactive rail is unchanged.
+
+    `ai_used`/`ai_error` are carried from the form rather than hardcoded: on the
+    topic flow the prose is written by the AI at PREFILL time, one step before
+    this function, and reporting False here made the UI claim no AI was used."""
     flat = to_flat_fields(form)
-    blanks = [lbl for lbl, txt in
-              [("विषय/subject", flat["subject"]),
-               ("प्रस्तावना/background", flat["background"])] if "____" in txt]
-    blanks += [f"कलम {i}" for i, c in enumerate(flat["clauses"], 1)
-               if "____" in c]
-    if blanks:
-        return {"error": "unfilled_blanks", "blanks": blanks}
+    if not allow_blanks:
+        blanks = [lbl for lbl, txt in
+                  [("विषय/subject", flat["subject"]),
+                   ("प्रस्तावना/background", flat["background"])] if "____" in txt]
+        blanks += [f"कलम {i}" for i, c in enumerate(flat["clauses"], 1)
+                   if "____" in c]
+        if blanks:
+            return {"error": "unfilled_blanks", "blanks": blanks}
     draft = build_draft(flat)
     out_form = dict(form)
     out_form["code"] = unique_code(flat["date"], flat["subject"])
     out_form["fy"] = financial_year(flat["date"])
     return {"draft": draft, "form": out_form,
             "audit": form_digit_audit(form, draft),
-            "ai_used": False, "ai_error": None}
+            "ai_used": bool(form.get("ai_used")),
+            "ai_error": form.get("ai_error")}
 
 
 SAMPLE = {

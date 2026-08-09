@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT / "src" / "ingest"))
+from devanagari import to_ascii_digits  # noqa: E402
 from quality import is_boilerplate, readability  # noqa: E402
 
 OUT = ROOT / "data" / "pairs_mined.jsonl"
@@ -42,8 +43,11 @@ ENUM_RE = re.compile(r"^\s*[0-9०-९]{1,2}[.)]\s*")
 
 def digits(s):
     # ignore long numbers (GR unique codes) and the leading clause enumerator —
-    # only substantive values (amounts, percentages, years) should drive mining
-    s = ENUM_RE.sub("", s)
+    # only substantive values (amounts, percentages, years) should drive mining.
+    # Script is folded first: `\d` matches Devanagari numerals but does not
+    # equate them, so '५०' and '50' would read as two different amounts and
+    # fabricate an "amendment" pair on a mixed-script corpus.
+    s = to_ascii_digits(ENUM_RE.sub("", s))
     return tuple(sorted(x.replace(",", "") for x in NUM.findall(s)
                         if len(x.replace(",", "").replace(".", "")) <= 7))
 
