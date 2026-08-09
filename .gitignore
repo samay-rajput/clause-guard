@@ -15,3 +15,15 @@ data/bulk_*.txt
 data/corpus_partial.jsonl
 data/audit_trail.jsonl
 data/gr_layout_check/
+data/autodraft/
+data/mahgrs/
+
+chroma_db.garbled/
+cache/llm.garbled/
+data/corpus.garbled.jsonl
+data/corpus_mahgrs_full.jsonl
+chroma_db_full/
+data/*.log
+# the frozen demo baseline is a gate, not scratch output — `data/warm_*.txt`
+# above would otherwise swallow it
+!data/warm_mahgrs.txt

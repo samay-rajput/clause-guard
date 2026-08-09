@@ -19,6 +19,7 @@ sys.path.append(str(ROOT / "src" / "llm"))
 sys.path.append(str(ROOT / "src" / "ingest"))
 from clients import llm_with_fallback, LLMError  # noqa: E402
 from chunk_clauses import chunk  # noqa: E402
+from devanagari import to_ascii_digits  # noqa: E402
 from extract_metadata import extract_citations, parse_header  # noqa: E402
 from quality import readability  # noqa: E402
 
@@ -44,9 +45,11 @@ def clean_one(rec, max_chars):
     raw = "\n".join(rec["clauses"])[:max_chars]
     fixed = llm_with_fallback(PROMPT.format(text=raw), preferred="gemini",
                               temperature=0.0, max_tokens=8192)
-    # digit-preservation audit: the multiset of digit-runs must survive
-    d_in = sorted(re.findall(r"\d+", raw))
-    d_out = sorted(re.findall(r"\d+", fixed))
+    # digit-preservation audit: the multiset of digit-runs must survive.
+    # Folded to one script first — a repair that rewrites 50 as ५० preserves the
+    # value, and the raw comparison would reject it as a lost number.
+    d_in = sorted(re.findall(r"\d+", to_ascii_digits(raw)))
+    d_out = sorted(re.findall(r"\d+", to_ascii_digits(fixed)))
     digit_ok = d_in == d_out
     h = parse_header(fixed[:2500])
     cites = extract_citations(fixed)

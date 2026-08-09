@@ -24,8 +24,24 @@ import re  # noqa: E402
 
 MR_DEPT_RE = re.compile(r"^\s*([ऀ-ॿ][ऀ-ॿ ,()&.\-]*(?:विभाग|वभाग|भवभाग|जवभाग|शवभाग|नवभाग|मवभाग|ववभाग|चवभाग|खवभाग))\s*[,.]?\s*$",
                         re.MULTILINE)
-MR_DATE_RE = re.compile(r"(?:दिनांक|ददनांक|नदनांक|मदनांक|भदनांक|खदनांक|दिनाक|दिनांक)\s*[:\-. ]*\s*([0-9०-९]{1,2}[^\n,]{0,25}[0-9०-९]{4})")
+# GR date lines are written "दिनांक : २७ सप्टेंबर, २०१८" — the comma between the
+# month and the year sits INSIDE the date, so excluding commas dropped 53% of them.
+# `तारीख` is used instead of `दिनांक` by a minority of departments.
+MR_DATE_RE = re.compile(
+    r"(?:दिनांक|ददनांक|नदनांक|मदनांक|भदनांक|खदनांक|दिनाक|तारीख)"
+    r"\s*[:\-. ]*\s*([0-9०-९]{1,2}[^\n]{0,28}?[0-9०-९]{4})"
+)
+# A Maharashtra file number is <prefix>-<year>/प्र.क्र.<serial>/<desk>. Anchoring on
+# that shape matters: a bare `क्र` also occurs inside ordinary words
+# (अभ्यासक्रमाच्या), and the loose pattern below "found" a GR number in 100% of
+# documents by returning fragments of prose like "माच्या संस्थेत".
+MR_GRNO_TIGHT_RE = re.compile(
+    r"(?:क्रमांक|क्रमाांक|क्रमाकं|क्र)\s*[:ः.\-]*\s*"
+    r"((?:[^\s\n,][^\n,]{0,24})?[-–][०-९0-9]{2,4}\s*/[^\n,]{4,60})"
+)
 MR_GRNO_RE = re.compile(r"(?:क्रमांक|क्रमाकं|क्रमाांक|क्र\.?)\s*[:\-ः]*\s*([^\n]{4,80})")
+# minimum shape for the loose fallback to be believable at all
+_GRNO_PLAUSIBLE = re.compile(r"[०-९0-9]{4}").search
 
 
 def parse_header_bilingual(text: str) -> dict:
@@ -39,9 +55,15 @@ def parse_header_bilingual(text: str) -> dict:
         if m:
             h["date"] = re.sub(r"\s+", " ", m.group(1)).strip()
     if not h["gr_number"]:
-        m = MR_GRNO_RE.search(text)
+        m = MR_GRNO_TIGHT_RE.search(text)
         if m:
-            h["gr_number"] = m.group(1).strip().rstrip(",.")
+            h["gr_number"] = re.sub(r"\s+", " ", m.group(1)).strip().rstrip(",.")
+        else:
+            m = MR_GRNO_RE.search(text)
+            # no number is better than a fragment of prose: a junk gr_number
+            # becomes a junk citation key and mislinks other GRs to this one
+            if m and _GRNO_PLAUSIBLE(m.group(1)):
+                h["gr_number"] = re.sub(r"\s+", " ", m.group(1)).strip().rstrip(",.")
     if not h["subject"]:
         # subject block = lines before the महाराष्ट्र शासन-ish line
         m = re.search(r"^(.*?)(?:महाराष्ट्र शासन|महाराष्र शासन|िहाराष्र िासन|िहाराष्ट्र िासन|महाराष्ट्र िासन|र्महाराष्र शासन)",

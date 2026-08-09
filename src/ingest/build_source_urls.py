@@ -8,9 +8,13 @@ of `gr_code`, written once to `data/source_urls.json` and read by the app.
 Build:  python src/ingest/build_source_urls.py
 """
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(Path(__file__).parent))
+from corpus_path import default_corpus_path  # noqa: E402
+
 CDX_FILE = ROOT / "data" / "cdx_english.txt"
 OUT_FILE = ROOT / "data" / "source_urls.json"
 
@@ -32,11 +36,10 @@ def links_for(gr_code: str):
 
 def build():
     corpus_codes = set()
-    for name in ("corpus_clean.jsonl", "corpus.jsonl"):
-        p = ROOT / "data" / name
-        if p.exists():
-            with open(p, encoding="utf-8") as f:
-                corpus_codes |= {json.loads(l)["gr_code"] for l in f if l.strip()}
+    p = default_corpus_path()
+    if p.exists():
+        with open(p, encoding="utf-8") as f:
+            corpus_codes |= {json.loads(l)["gr_code"] for l in f if l.strip()}
 
     latest = {}
     with open(CDX_FILE, encoding="utf-8") as f:

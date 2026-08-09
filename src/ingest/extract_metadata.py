@@ -1,5 +1,10 @@
 """Header/metadata extraction from English Maharashtra GR first-page text."""
 import re
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent))
+from devanagari import to_ascii_digits  # noqa: E402
 
 DEPT_RE = re.compile(
     r"^\s*([A-Z][A-Za-z,&.'\- ]*?Department)\s*[,.]?\s*$", re.MULTILINE
@@ -14,8 +19,12 @@ DATE_RE = re.compile(
     re.IGNORECASE,
 )
 DATE_NUM_RE = re.compile(r"Date[d]?\s*[:\-. ]*\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4})", re.IGNORECASE)
-# 18-digit unique GR codes (used for citation linking + supersession checks)
-UNIQUE_CODE_RE = re.compile(r"\b(20\d{16})\b")
+# 18-digit unique GR codes (used for citation linking + supersession checks).
+# Both scripts: the archive corpus extracts them as ASCII, clean GR text prints
+# them in Devanagari (सांकेतांक २०२४०७१९१८५७३३५४०८). Matches are folded to ASCII by
+# extract_citations so they compare against filename-derived gr_codes.
+# `\b` is unreliable next to Devanagari digits, so the boundaries are lookarounds.
+UNIQUE_CODE_RE = re.compile(r"(?<![0-9०-९])([2२][0०][0-9०-९]{16})(?![0-9०-९])")
 # Formal GR reference strings cited in "Read"/body, e.g.
 #   "Government Resolution No. NGC-2024/C.R.100/TE-4, dated 14th August 2024"
 REF_RE = re.compile(
@@ -24,9 +33,15 @@ REF_RE = re.compile(
     re.IGNORECASE,
 )
 # Marathi form: "शासन निर्णय क्र.शिष्यवृ-2024/प्र.क्र.105/तासशि-4, दि.08.07.2024"
-# (क्रमांक/क्र + a slash-separated file number, optional दि./दिनांक date tail)
+# (क्रमांक/क्र + a slash-separated file number, optional दि./दिनांक date tail).
+# A citation of ANOTHER department names it in between —
+# "शासन निर्णय, शालेय शिक्षण व क्रीडा विभाग, क्र.पीआई-1094/..." — so up to ~45
+# characters are allowed there. Requiring the two to be adjacent lost every
+# cross-department citation: AC-1 on clean text measured 55% without this and
+# 75% with it, with no change to the draft or archived populations.
 REF_MR_RE = re.compile(
     r"((?:शासन\s*(?:निर्णय|परिपत्रक)|परिपत्रक|निर्णय)\s*"
+    r"(?:[^\n]{0,45}?)?"
     r"(?:क्रमांक|क्र)\.?\s*[:\-ः]?\s*[^\s,][^\n,]{4,70}"
     r"(?:,?\s*(?:दि|दिनांक)\.?\s*[^\n,;)]{4,25})?)"
 )
@@ -82,7 +97,7 @@ REF_MR_GARBLED_RE = re.compile(
 
 
 def extract_citations(text: str) -> dict:
-    codes = sorted(set(UNIQUE_CODE_RE.findall(text)))
+    codes = sorted({to_ascii_digits(c) for c in UNIQUE_CODE_RE.findall(text)})
     refs, spans = [], []
     # Word-anchored patterns first; the garbled fallback only fills the gaps it
     # leaves, and never re-reports a fragment of a citation already captured.
