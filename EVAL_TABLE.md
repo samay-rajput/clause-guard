@@ -3,6 +3,23 @@
 > All rows are scored on the SAME held-out 563-pair test set (grouped split by
 > seed clause, seed 42). Zero-shot judges see 5 pairs per request (few-shot
 > JSON). Numbers are written by scripts from `results/*.json`, not by hand.
+>
+> **Measured on the garbled archival corpus — superseded as of Aug 6, 2026.**
+> Every row in the table below was trained and scored on clause pairs drawn from
+> `data/corpus.jsonl`, whose Marathi carries the legacy-font extraction corruption.
+> The product now serves `data/corpus_mahgrs.jsonl` (clean OCR'd text; readability
+> median 0.1433 → 0.2513). These numbers remain the honest record of what was
+> measured, but they describe the *previous* serving condition. Re-generating pairs
+> from clean text and re-fine-tuning MuRIL is outstanding work, and until it lands the
+> screener is a model trained on garbled text being applied to clean text. What that
+> costs is bounded rather than guessed: the screener is stage 1 of 2 and only ever
+> *proposes* pairs — every flag still passes the extraction-verify stage, where code
+> (not a model) compares the actual values and a hallucinated number cannot flag
+> anything. Measured effect of the corpus change on screening volume: MuRIL flags
+> roughly 1.8x more candidate pairs on clean text.
+>
+> Citation-extraction recall (AC-1) IS re-measured on the new corpus and is reported
+> below and in `results/metrics_citation_recall.json`.
 
 | System | Macro-F1 | Contradiction F1 | Consistent F1 | Neutral F1 | Latency / pair | Throughput | Marginal cost |
 |---|---|---|---|---|---|---|---|
@@ -56,6 +73,17 @@ report ~100% for free.
 | **Clean drafts** — what the app actually receives (typed, pasted or uploaded) | **100%** | 4/4 refs over 3 drafts | **pass** |
 | **Archived GR PDFs** — first-page text carrying legacy-font garble | **60%** | 12/20 refs over 12 GRs | below target |
 | — same population, before the garble-tolerant pattern | **0%** | 0/20 | — |
+| **Same 12 GRs, clean mahGRs text** (the serving corpus since Aug 6, 2026) | **75%** | 15/20 refs over 12 GRs | below target |
+| — same population, before allowing a department name inside the reference | **55%** | 11/20 | — |
+
+The clean-text row is worth reading twice, because the naive expectation is wrong:
+clean text alone scored *worse* than the garbled archive (55% vs 60%). The reason was
+not the text but the pattern — `शासन निर्णय` and `क्र.` are adjacent only when a GR cites
+its **own** department. A citation of another department names it in between
+("शासन निर्णय, शालेय शिक्षण व क्रीडा विभाग, क्र.पीआई-1094/…"), so the requirement that the
+two be adjacent was systematically dropping exactly the *cross-departmental* citations
+this project exists to track. Allowing the department name takes the population to 75%
+with the clean-draft and archived rows unchanged.
 
 The archived-GR row is the corpus-garble story showing up in a second place: the
 reference patterns key on `शासन निर्णय`, which extracts font-specifically corrupted

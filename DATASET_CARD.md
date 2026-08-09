@@ -1,5 +1,19 @@
 # Dataset card — GR clause-conflict pairs (synthetic labels, real clause grounding)
 
+> **Corpus change, Aug 6 2026 — read this before using the numbers below.**
+> Every measurement in this card was made on the **archival-text corpus**
+> (`data/corpus.jsonl`), whose Marathi is corrupted by the legacy-font extraction bug.
+> The serving corpus is now `data/corpus_mahgrs.jsonl` — the same 776 GRs as clean
+> OCR'd text from `orgpedia/mahGRs` (readability median 0.1433 → 0.2513). The pairs,
+> the fine-tuned MuRIL screener and every score below therefore describe a text
+> distribution the product **no longer serves**. Regenerating pairs from clean text and
+> re-fine-tuning (Colab T4, ~9 min) is the outstanding work; until it is done, treat
+> these as *measured on garbled text, superseded*. The pair generator and dataset
+> scripts are already clean-text-safe (digit comparisons fold Devanagari to ASCII, and
+> the quality gates that were tuned to the garbled distribution — `min_doc_quality=0.14`,
+> clause `0.13`, readability `clean ≥ 0.16` — barely bind on clean text, where ~97% of
+> documents score "clean").
+
 > Status: skeleton — distributions and results are filled in by the pipeline once
 > generation completes. Numbers in this card are written by scripts, not by hand.
 

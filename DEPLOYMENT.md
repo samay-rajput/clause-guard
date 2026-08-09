@@ -12,6 +12,15 @@ first boot downloads the heavy runtime artifacts from the public Hugging Face Hu
 
 No token is needed to download; both repos are public.
 
+> **The published artifacts are the pre-migration ones** (archival-text corpus, 11,817
+> clauses, and the LLM cache warmed against it) and the deployed app still serves them —
+> deliberately: the clean-corpus rebuild is local-only until you choose to publish it.
+> Re-publishing means uploading the new `chroma_db/` (10,370 clauses) **and** the new
+> `cache/llm/` **and** committing `data/corpus_mahgrs.jsonl` + `data/corpus.active`
+> together. They are one unit: a corpus without its matching cache means every demo
+> scenario runs live against the cloud LLM, and `bootstrap.py` validates artifacts by file
+> existence only, so a stale index would be accepted silently.
+
 ## Streamlit Community Cloud (recommended free host)
 
 1. Sign in at https://share.streamlit.io with the GitHub account that owns

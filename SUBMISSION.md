@@ -9,10 +9,11 @@
 ## Pitch (one paragraph)
 
 ClauseGuard drafts and reviews Government Resolutions against 776 real Maharashtra GRs
-(11,951 clauses parsed, 11,817 indexed for retrieval; built from the Internet Archive
-while the live portal was down) and
+(10,389 clauses parsed, 10,370 indexed for retrieval; text from orgpedia/mahGRs, the
+dataset the problem statement names — a further 23,331 GRs across 10 departments are
+built by the same pipeline) and
 flags the clause-level conflicts a drafting officer would otherwise miss. Retrieval
-narrows thousands of clauses to ~30 candidates; a fine-tuned MuRIL cross-encoder
+narrows thousands of clauses to ~50 candidates; a fine-tuned MuRIL cross-encoder
 (238M, 130 ms/pair on CPU — no API, no rate limits) screens them to a handful; an LLM
 then only *extracts* the competing values ("50 टक्के" vs "100 टक्के") — grounded
 against the clauses they came from — and deterministic code makes the conflict call:
