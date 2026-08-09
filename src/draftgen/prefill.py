@@ -232,6 +232,10 @@ def retrieve_precedents(topic: str, corpus=None, k: int = 8, retrieve_fn=None,
             "gr_code": cand["gr_code"],
             "distance": round(cand["distance"], 4),
             "subject": (rec.get("subject") or cand.get("subject") or "")[:200],
+            # the nearest CLAUSE BODY rides along: the AI wording rail adapts
+            # real official phrasing instead of free-writing, and the wording
+            # audit needs the reference text to measure fidelity against
+            "clause": (cand.get("clause") or "")[:400],
             "date_iso": rec.get("date_iso") or f"{cand['gr_code'][:4]}-"
                         f"{cand['gr_code'][4:6]}-{cand['gr_code'][6:8]}",
             "dept_code": cand["gr_code"][-2:],
@@ -353,8 +357,8 @@ AI_PROMPT = {
     "mr": """तुम्ही महाराष्ट्र शासनाच्या शासन निर्णयाचा (GR) फॉर्म भरत आहात.
 विषय (वापरकर्त्याने दिलेला): {topic}
 
-संदर्भ म्हणून खालील खऱ्या शासन निर्णयांचे विषय दिले आहेत — त्यांतील मजकुरात
-OCR-दोष असू शकतो; तुम्ही मात्र शुद्ध प्रमाण मराठीत लिहा:
+संदर्भ म्हणून खालील खऱ्या शासन निर्णयांचे विषय व नमुना-कलमे दिली आहेत —
+त्यांतील मजकुरात OCR-दोष असू शकतो; तुम्ही मात्र शुद्ध प्रमाण मराठीत लिहा:
 {precedent_lines}
 
 फक्त JSON परत करा, keys:
@@ -362,17 +366,21 @@ OCR-दोष असू शकतो; तुम्ही मात्र शु�
 - "file_prefix": फाईल क्रमांकासाठी 2-6 अक्षरी संक्षेप (उदा. शिष्यवृ, सादिल)
 - "background": प्रस्तावनेचा एक औपचारिक परिच्छेद, शेवट "ही बाब शासनाच्या
   विचाराधीन होती." असा
-- "clauses": बरोबर {n} कार्यवाहीचे मुद्दे (array of strings; क्रमांक लिहू नका;
-  प्रत्येक मुद्दा 15-30 शब्दांचा, शासकीय शैलीत, पाल्हाळ नको)
+- "clauses": बरोबर {n} कार्यवाहीचे मुद्दे — प्रत्येक घटक {{"text": "...",
+  "src": <वरीलपैकी ज्या संदर्भ-कलमाच्या शब्दयोजनेवर आधारित आहे त्याचा क्रमांक,
+  नाहीतर -1>}} असा object. शक्य तिथे संदर्भ-कलमाची अधिकृत शब्दयोजना कमीत कमी
+  बदलांसह वापरा — नव्याने वाक्यरचना करू नका. क्रमांक लिहू नका; प्रत्येक मुद्दा
+  15-30 शब्दांचा, शासकीय शैलीत.
 - "needs_numbers": ज्या रकमा/दिनांक/टक्केवारी तुम्हाला माहीत नाहीत त्यांबद्दलचे
   प्रश्न (array of strings, कमाल 5)
 रक्कम/दिनांक माहीत नसल्यास मजकुरात "____" वापरा. विषयात किंवा वरील संदर्भांत
-नसलेली कोणतीही संख्या स्वतः लिहू नका. JSON पूर्ण करा — मध्येच थांबू नका.""",
+नसलेली कोणतीही संख्या, योजना-नाव किंवा संस्था-नाव स्वतः लिहू नका. JSON पूर्ण
+करा — मध्येच थांबू नका.""",
     "en": """You are filling the form for a Maharashtra Government Resolution (GR).
 Topic (from the user): {topic}
 
-Subjects of real precedent GRs are given below for reference — their text may
-carry OCR damage; you must write clean formal English:
+Subjects and sample clauses of real precedent GRs are given below — their text
+may carry OCR damage; you must write clean formal English:
 {precedent_lines}
 
 Return ONLY JSON with keys:
@@ -380,13 +388,16 @@ Return ONLY JSON with keys:
 - "file_prefix": a 2-6 letter file-number abbreviation (e.g. TEM, SCH)
 - "background": ONE formal Preamble paragraph ending with the convention that
   the matter "was under consideration of the Government."
-- "clauses": exactly {n} operative clauses (array of strings; no numbering
-  inside the strings; each 15-30 words, imperative government style, concise)
+- "clauses": exactly {n} operative clauses — each an object {{"text": "...",
+  "src": <index of the precedent clause above whose official wording it
+  adapts, else -1>}}. Wherever possible ADAPT the precedent clause's official
+  phrasing with minimal edits rather than writing fresh prose. No numbering
+  inside the strings; each 15-30 words, imperative government style.
 - "needs_numbers": questions about any amounts/dates/percentages you do not
   know (array of strings, max 5)
 Use "____" in the text wherever an amount or date is unknown. Do not invent
-any number that is not in the topic or the precedents above. Complete the
-JSON — never stop midway.""",
+any number, scheme name or institution name that is not in the topic or the
+precedents above. Complete the JSON — never stop midway.""",
 }
 
 _DIGIT_RUN_RE = re.compile(r"[0-9०-९][0-9०-९,]*")
@@ -413,8 +424,106 @@ def scrub_unsourced_digits(text: str, allowed: set) -> tuple:
     return _DIGIT_RUN_RE.sub(sub, text or ""), removed
 
 
+# ---------- entity + word-date rail (round 3) ----------
+# The digit scrub cannot see "MahaDBT", "एकात्मिक बालविकास योजना" or "thirty-first
+# March". Candidate ENTITIES are detected narrowly (compound scheme/portal names,
+# CamelCase, multi-word TitleCase, 3+ letter acronyms, quoted spans) and month
+# names; anything that does not trace to the topic/precedents is blanked.
+# NOTE: Devanagari matras are NOT \w in Python re, so \b misfires around
+# Marathi words — these patterns use explicit block lookarounds instead.
+_ENTITY_RES = [
+    re.compile(r"[‘’'\"«“]([^'\"»”‘’]{3,60})['\"»”’]"),  # quoted spans
+    re.compile(r"(?<![ऀ-ॿ])[ऀ-ॿ]{3,}(?:योजना|अभियान|पोर्टल|महामंडळ|प्राधिकरण)(?![ऀ-ॿ])"),
+    re.compile(r"\b[A-Za-z]*[a-z][A-Z][A-Za-z]+\b"),     # CamelCase (MahaDBT)
+    re.compile(r"\b[A-Z]{2,}[a-z][A-Za-z]*\b"),          # PMKisan-style mixed caps
+    re.compile(r"\b(?:[A-Z][a-z]+ ){1,3}(?:Yojana|Abhiyan|Portal|Mission|Scheme)\b"),
+    re.compile(r"\b[A-Z]{3,}\b"),                        # acronyms
+]
+_MONTHS = ("जानेवारी", "फेब्रुवारी", "मार्च", "एप्रिल", "मे", "जून", "जुलै",
+           "ऑगस्ट", "सप्टेंबर", "ऑक्टोबर", "नोव्हेंबर", "डिसेंबर",
+           "January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December")
+_MONTH_RE = re.compile(r"(?<![ऀ-ॿA-Za-z])(" + "|".join(_MONTHS) + r")(?![ऀ-ॿa-z])")
+# generic government vocabulary that must never be treated as an entity
+_ENTITY_STOP = {"शासन", "निर्णय", "महाराष्ट्र", "मंत्रालय", "मुंबई", "विभाग",
+                "GR", "PDF", "DBT", "Government", "Resolution", "Maharashtra"}
+
+
+def _norm_span(s: str) -> str:
+    return " ".join((s or "").lower().split())
+
+
+def scrub_unsourced_entities(text: str, allowed_blob: str) -> tuple:
+    """Blank every detected entity/month whose normalised form does not occur
+    in the allowed sources. Returns (scrubbed_text, [removed spans])."""
+    removed = []
+    blob = _norm_span(allowed_blob)
+    out = text or ""
+    spans = set()
+    for rx in _ENTITY_RES:
+        for m in rx.finditer(out):
+            span = m.group(1) if m.groups() else m.group(0)
+            spans.add(span.strip())
+    for m in _MONTH_RE.finditer(out):
+        spans.add(m.group(1))
+    for span in sorted(spans, key=len, reverse=True):
+        if span in _ENTITY_STOP or "____" in span or not span:
+            continue
+        if _norm_span(span) in blob:
+            continue
+        removed.append(span)
+        out = out.replace(span, "____")
+    return out, removed
+
+
+_TEMPLATES = {"loaded": False, "by_dept": {}}
+
+
+def templates_for(dept_code: str, k: int = 2) -> list:
+    """Top canonical clause templates for a department, mined from the full
+    corpus by src/draftgen/mine_templates.py (verbatim in >=20 real GRs).
+    Empty list when the mined file is absent — the rail degrades gracefully."""
+    if not _TEMPLATES["loaded"]:
+        p = ROOT / "data" / "clause_templates.jsonl"
+        if p.exists():
+            for line in p.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    row = json.loads(line)
+                    _TEMPLATES["by_dept"].setdefault(row["dept_code"], []).append(row)
+        _TEMPLATES["loaded"] = True
+    return _TEMPLATES["by_dept"].get(dept_code, [])[:k]
+
+
+def _char3grams(s: str) -> set:
+    s = re.sub(r"[0-9०-९\s]+", " ", _norm_span(s))
+    return {s[i:i + 3] for i in range(len(s) - 2)} if len(s) >= 3 else set()
+
+
+def wording_audit(clauses: list, srcs: list, precedents: list,
+                  threshold: float = 0.28) -> list:
+    """Per-clause wording-fidelity report: char-3-gram containment of the
+    generated clause in its cited precedent clause (digits stripped — the
+    digit rails own numerals). Below threshold → 'unverified' — the UI flags
+    the clause and the export carries the DRAFT marker."""
+    report = []
+    for i, clause in enumerate(clauses):
+        src = srcs[i] if i < len(srcs) else -1
+        ref = precedents[src]["clause"] if 0 <= src < len(precedents) else ""
+        if not ref:
+            report.append({"idx": i, "src": src, "containment": None,
+                           "verdict": "no-precedent"})
+            continue
+        gen = _char3grams(clause)
+        containment = (len(gen & _char3grams(ref)) / len(gen)) if gen else 0.0
+        report.append({"idx": i, "src": src,
+                       "containment": round(containment, 3),
+                       "verdict": "grounded" if containment >= threshold
+                       else "unverified"})
+    return report
+
+
 def ai_prefill(topic: str, lang: str, precedents: list, n_clauses: int = 3,
-               llm_fn=None) -> dict:
+               llm_fn=None, templates: list = None) -> dict:
     """One LLM call proposing PROSE only: subject, file prefix, background,
     clauses, and the open questions. Raises LLMError on failure; the caller
     scrubs every unsourced digit before anything reaches the form."""
@@ -422,22 +531,42 @@ def ai_prefill(topic: str, lang: str, precedents: list, n_clauses: int = 3,
     if fixture:
         data = json.loads(Path(fixture).read_text(encoding="utf-8"))
     else:
-        lines = "\n".join(f"- [{p['date_iso']}] {p['subject'][:150]}"
-                          for p in precedents) or "- (no precedents found)"
-        raw = (llm_fn or llm_with_fallback)(
-            AI_PROMPT[lang].format(topic=topic, precedent_lines=lines,
-                                   n=n_clauses),
-            temperature=0.3, max_tokens=2000, json_mode=True)
+        # canonical dept templates ride behind the precedents in the same
+        # index space — the model may cite either as a wording source
+        entries = ([(p["date_iso"], p["subject"][:150], p.get("clause", ""))
+                    for p in precedents]
+                   + [("प्रमाण-नमुना", f"वापर {t['n_grs']} शासन निर्णयांत",
+                       t["text"]) for t in (templates or [])])
+        lines = "\n".join(
+            f"[{i}] [{a}] {b}" + (f"\n    कलम/clause: {c[:220]}" if c else "")
+            for i, (a, b, c) in enumerate(entries)) or "- (no precedents found)"
+        # wording quality is the whole point of this call — Gemini leads the
+        # Indic benchmarks by a wide margin, so it drafts; Groq is the fallback
+        fn = llm_fn or (lambda p, **kw: llm_with_fallback(p, preferred="gemini", **kw))
+        raw = fn(AI_PROMPT[lang].format(topic=topic, precedent_lines=lines,
+                                        n=n_clauses),
+                 temperature=0.3, max_tokens=2000, json_mode=True)
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         try:
             data = json.loads(m.group(0) if m else raw)
         except json.JSONDecodeError as e:
             raise LLMError(f"topic-prefill returned malformed JSON: {e}")
     try:
+        clauses, srcs = [], []
+        for c in data.get("clauses") or []:
+            if isinstance(c, dict):                 # round-3 shape {text, src}
+                clauses.append(str(c.get("text") or ""))
+                try:
+                    srcs.append(int(c.get("src", -1)))
+                except (TypeError, ValueError):
+                    srcs.append(-1)
+            else:                                    # legacy/fixture: plain string
+                clauses.append(str(c))
+                srcs.append(-1)
         return {"subject": str(data.get("subject") or ""),
                 "file_prefix": str(data.get("file_prefix") or ""),
                 "background": str(data.get("background") or ""),
-                "clauses": [str(c) for c in data.get("clauses") or []],
+                "clauses": clauses, "clause_srcs": srcs,
                 "needs_numbers": [str(q) for q in
                                   (data.get("needs_numbers") or [])][:5]}
     except (TypeError, AttributeError) as e:
@@ -453,12 +582,14 @@ def topic_prefill(topic: str, lang: str = "mr", corpus=None, retrieve_fn=None,
     intact and reports itself in ai_error."""
     form = deterministic_prefill(topic, lang, corpus, retrieve_fn, on_date)
     result = {"form": form, "ai_used": False, "ai_error": None,
-              "scrubbed": [], "needs_numbers": []}
+              "scrubbed": [], "scrubbed_entities": [], "wording": None,
+              "needs_numbers": []}
     if not use_ai:
         return result
+    tmpls = templates_for(form["dept_code"])
     try:
         prose = ai_prefill(topic, lang, form["precedents"],
-                           n_clauses=n_clauses, llm_fn=llm_fn)
+                           n_clauses=n_clauses, llm_fn=llm_fn, templates=tmpls)
     except LLMError as e:
         result["ai_error"] = str(e)
         return result
@@ -469,30 +600,49 @@ def topic_prefill(topic: str, lang: str = "mr", corpus=None, retrieve_fn=None,
                                       for p in form["precedents"]))
                | _digit_runs(form["fy"])
                | {str(y), str(y + 1), f"{y % 100:02d}", f"{(y + 1) % 100:02d}"})
-    scrubbed_all = []
+    # everything the AI was shown = the only legitimate source of entities
+    dept = DEPARTMENTS[form["dept_code"]]
+    ent_blob = " ".join([topic, dept["name"]["mr"], dept["name"]["en"],
+                         *(f"{p['subject']} {p.get('clause', '')}"
+                           for p in form["precedents"]),
+                         *(t["text"] for t in tmpls)])
+    scrubbed_all, ent_all = [], []
+
+    def _rails(text: str) -> str:
+        out, rem = scrub_unsourced_digits(text, allowed)
+        scrubbed_all.extend(rem)
+        out, rem = scrub_unsourced_entities(out, ent_blob)
+        ent_all.extend(rem)
+        return out
+
     if prose["subject"].strip():
-        subj, rem = scrub_unsourced_digits(prose["subject"].strip(), allowed)
+        subj = _rails(prose["subject"].strip())
         form["subject"] = subj if lang == "en" or subj.endswith("बाबत.") \
             else _subject_line(subj, lang)
-        scrubbed_all += rem
     if prose["background"].strip():
-        form["background"], rem = scrub_unsourced_digits(
-            prose["background"].strip(), allowed)
-        scrubbed_all += rem
+        form["background"] = _rails(prose["background"].strip())
+    srcs = prose.get("clause_srcs") or []
     if prose["clauses"]:
-        cleaned = []
-        for c in prose["clauses"]:
-            c2, rem = scrub_unsourced_digits(c.strip(), allowed)
+        cleaned, kept_srcs = [], []
+        for i, c in enumerate(prose["clauses"]):
+            c2 = _rails(c.strip())
             if c2:
                 cleaned.append(c2)
-            scrubbed_all += rem
+                kept_srcs.append(srcs[i] if i < len(srcs) else -1)
         if cleaned:
             form["clauses"] = cleaned
+            # wording-fidelity: each AI clause measured against the precedent
+            # clause (or dept template) it claims to adapt — sourced-or-flagged,
+            # like the digits. Templates share the prompt's index space.
+            refs = form["precedents"] + [{"clause": t["text"]} for t in tmpls]
+            form["wording_audit"] = wording_audit(cleaned, kept_srcs, refs)
     form["gr_number"] = propose_gr_number(
         DEPARTMENTS[form["dept_code"]], lang, form["date"], topic,
         prefix=prose["file_prefix"].strip() or None)
     form["code"] = unique_code(form["date"], form["subject"])
     result.update(ai_used=True, scrubbed=scrubbed_all,
+                  scrubbed_entities=ent_all,
+                  wording=form.get("wording_audit"),
                   needs_numbers=prose["needs_numbers"])
     return result
 

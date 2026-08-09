@@ -158,9 +158,12 @@ def _digit_runs(text: str) -> set:
 
 
 def ai_sections(brief: str, lang: str = "en", n_clauses: int = 3) -> dict:
-    """LLM-drafted {background, clauses[]} from the officer's brief, digit-audited
-    against it. Raises LLMError on provider failure or audit failure."""
+    """LLM-drafted {background, clauses[]} from the officer's brief, digit- and
+    entity-audited against it. Raises LLMError on provider or audit failure."""
+    # Marathi/formal wording is the deliverable — Gemini preferred (Indic
+    # benchmarks), Groq as the silent fallback
     raw = llm_with_fallback(PROMPT[lang].format(brief=brief, n=n_clauses),
+                            preferred="gemini",
                             temperature=0.3, max_tokens=1500, json_mode=True)
     m = re.search(r"\{.*\}", raw, re.DOTALL)  # tolerate fences / stray prose
     try:
@@ -177,6 +180,16 @@ def ai_sections(brief: str, lang: str = "en", n_clauses: int = 3) -> dict:
     if dropped := allowed - produced:
         raise LLMError(f"digit audit: AI dropped number(s) {sorted(dropped)} "
                        "from the brief — output rejected")
+    # entity audit — same contract as digits on this path: reject, fall back.
+    # (The prefill path scrubs-to-blank instead; here there is no form UI to
+    # surface a blank, so an unsourced entity voids the AI output entirely.)
+    import sys as _sys
+    _sys.path.append(str(ROOT / "src" / "draftgen"))
+    from prefill import scrub_unsourced_entities
+    _, ents = scrub_unsourced_entities(background + " " + " ".join(clauses), brief)
+    if ents:
+        raise LLMError(f"entity audit: AI introduced unsourced name(s) "
+                       f"{ents[:4]} — output rejected")
     return {"background": background, "clauses": clauses}
 
 
@@ -234,8 +247,16 @@ def form_digit_audit(form: dict, draft_text: str) -> dict:
         allowed |= _digit_runs(chunk)
     allowed |= _digit_runs(financial_year(d))
     allowed |= {unique_code(d, flat["subject"]), str(d.year),
-                f"{d.month:02d}", f"{d.day:02d}", "400", "032"}
-    allowed |= {str(i) for i in range(0, 32)}      # list numbering + day/month
+                f"{d.month:02d}", f"{d.day:02d}", str(d.month), str(d.day),
+                "400", "032"}
+    # STRUCTURAL numbering only — a blanket 0-31 allowance let any small
+    # invented figure ("within 15 days") slip past the audit. Now: clause
+    # numbering (+scaffold-appended financial & availability clauses), वाचा
+    # numbering, प्रत numbering, and calendar months. Nothing else.
+    allowed |= {str(i) for i in range(1, len(flat["clauses"]) + 4)}
+    allowed |= {str(i) for i in range(1, len(flat["references"]) + 2)}
+    allowed |= {str(i) for i in range(1, len(form.get("copy_to") or []) + 2)}
+    allowed |= {str(i) for i in range(1, 13)}
     produced = _digit_runs(draft_text)
     must_appear = set()
     for chunk in (flat["subject"], flat["background"], *flat["clauses"]):

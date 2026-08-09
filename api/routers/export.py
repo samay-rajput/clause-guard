@@ -29,11 +29,26 @@ def _file(content: bytes, name: str, fmt: str) -> Response:
 
 @router.post("/authentic")
 def authentic(req: ExportAuthenticRequest, fmt: str = "pdf",
+              allow_unverified: bool = False,
               user: dict = Depends(get_current_user)):
     fmt = _fmt(fmt)
     if not (req.form or req.draft):
         raise HTTPException(422, "form or draft required")
     form = domain.coerce_date(req.form) if req.form else domain.parse_draft(req.draft)
+    # round-3 gate: every वाचा reference must resolve against the corpus before
+    # a draft leaves in the authentic government format. Overriding renders a
+    # visible मसुदा/DRAFT band on every page instead of silently passing.
+    from citations import validate_references
+    check = validate_references(form.get("references") or [], domain.corpus())
+    if check["unresolved"]:
+        if not allow_unverified:
+            raise HTTPException(422, {
+                "error": "unresolved_references",
+                "unresolved": check["unresolved"],
+                "hint": "re-export with allow_unverified=true to stamp a "
+                        "DRAFT marker instead"})
+        form = dict(form)
+        form["draft_marker"] = True
     try:
         blob = domain.gr_pdf(form) if fmt == "pdf" else domain.gr_docx(form)
     except Exception as e:

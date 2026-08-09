@@ -14,6 +14,8 @@ interface PrefillMeta {
   ai_used?: boolean;
   ai_error?: string | null;
   scrubbed?: string[];
+  scrubbed_entities?: string[];
+  wording?: Array<{ idx: number; src: number; containment: number | null; verdict: string }> | null;
   needs_numbers?: string[];
 }
 
@@ -75,7 +77,9 @@ export default function Studio() {
     try {
       const out = await api.post("/api/generate/prefill", { topic, lang: draftLang });
       setPrefill(out.form);
-      setMeta({ ai_used: out.ai_used, ai_error: out.ai_error, scrubbed: out.scrubbed, needs_numbers: out.needs_numbers });
+      setMeta({ ai_used: out.ai_used, ai_error: out.ai_error, scrubbed: out.scrubbed,
+                scrubbed_entities: out.scrubbed_entities, wording: out.wording,
+                needs_numbers: out.needs_numbers });
       fillFromForm(out.form);
     } catch (e: any) {
       setErr(String(e?.message ?? e));
@@ -276,6 +280,28 @@ export default function Studio() {
           ))}
           {meta?.scrubbed && meta.scrubbed.length > 0 && (
             <div className="text-xs text-muted">🧹 {t("scrubbed", uiLang)}: {meta.scrubbed.slice(0, 6).join(", ")}</div>
+          )}
+          {meta?.scrubbed_entities && meta.scrubbed_entities.length > 0 && (
+            <div className="text-xs text-muted">
+              🧹 {uiLang === "mr" ? "स्रोत नसलेली नावे ____ केली" : "Unsourced names blanked"}:{" "}
+              {meta.scrubbed_entities.slice(0, 4).join(", ")}
+            </div>
+          )}
+          {meta?.wording && meta.wording.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="font-semibold text-muted">
+                {uiLang === "mr" ? "शब्दयोजना-पडताळणी" : "Wording fidelity"}:
+              </span>
+              {meta.wording.map((w) => (
+                <Badge
+                  key={w.idx}
+                  tone={w.verdict === "grounded" ? "ok" : w.verdict === "unverified" ? "warn" : "info"}
+                >
+                  {uiLang === "mr" ? "कलम" : "clause"} {w.idx + 1}:{" "}
+                  {w.verdict === "grounded" ? `✓ GR ${w.src + 1}` : w.verdict === "unverified" ? "⚠ unverified" : "—"}
+                </Badge>
+              ))}
+            </div>
           )}
         </Card>
       )}

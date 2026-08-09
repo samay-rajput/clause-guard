@@ -39,6 +39,35 @@ def _norm_ref(s: str) -> str:
     return s
 
 
+def validate_references(references: list, corpus: list) -> dict:
+    """Round-3 export gate: every वाचा entry must resolve to a real GR before a
+    draft may leave in the authentic format. References arrive as strings or
+    {"text": ...} dicts. Resolution: 18-digit unique code, else normalised
+    file-number containment — the same two identifiers the linker trusts.
+    Returns {"resolved": [...], "unresolved": [...]} of the original texts."""
+    codes = {r.get("gr_code") for r in corpus if r.get("gr_code")}
+    file_nos = {}
+    for r in corpus:
+        n = _norm_ref(r.get("gr_number") or "")
+        if len(n) >= 6:
+            file_nos[n] = r.get("gr_code")
+    resolved, unresolved = [], []
+    for ref in references or []:
+        text = (ref.get("text") if isinstance(ref, dict) else str(ref)).strip()
+        if not text:
+            continue
+        code_m = re.search(r"\b(20\d{16})\b", to_ascii_digits(text))
+        if code_m and code_m.group(1) in codes:
+            resolved.append(text)
+            continue
+        n = _norm_ref(text)
+        if n and any(fn in n for fn in file_nos):
+            resolved.append(text)
+            continue
+        unresolved.append(text)
+    return {"resolved": resolved, "unresolved": unresolved}
+
+
 def analyze_references(draft_text: str, corpus: list) -> dict:
     """Return citations found in the draft, matched corpus GRs, and stale flags."""
     cites = extract_citations(draft_text)

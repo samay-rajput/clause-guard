@@ -27,6 +27,7 @@ export function ExportBar({
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [unresolved, setUnresolved] = useState<string[] | null>(null);
 
   const body = form ? { form } : { draft };
 
@@ -36,9 +37,15 @@ export function ExportBar({
     try {
       const { url, filename } = await api.blob(path, payload);
       if (save) download(url, filename);
+      setUnresolved(null);
       return url;
     } catch (e: any) {
-      setErr(String(e?.message ?? e));
+      // the वाचा existence gate: offer the DRAFT-marked override
+      if (e?.detail?.error === "unresolved_references") {
+        setUnresolved(e.detail.unresolved ?? []);
+      } else {
+        setErr(String(e?.message ?? e));
+      }
       return null;
     } finally {
       setBusy(null);
@@ -82,6 +89,29 @@ export function ExportBar({
         )}
       </div>
       {err && <Alert tone="bad">{err}</Alert>}
+      {unresolved && (
+        <Alert tone="warn">
+          <div className="font-semibold">
+            ⚠ {lang === "mr"
+              ? "खालील वाचा-संदर्भ संग्रहात सापडले नाहीत — अस्सल स्वरूप रोखले."
+              : "These वाचा references do not resolve against the corpus — authentic export blocked."}
+          </div>
+          {unresolved.map((u, i) => (
+            <div key={i} className="mt-1 font-mono text-xs">{u.slice(0, 100)}</div>
+          ))}
+          <Button
+            variant="outline"
+            className="mt-2"
+            disabled={busy !== null}
+            onClick={async () => {
+              const url = await grab("/api/export/authentic?fmt=pdf&allow_unverified=true", body, "pdf", false);
+              if (url) setPreview(url);
+            }}
+          >
+            {lang === "mr" ? "तरीही निर्यात करा — मसुदा-शिक्का लागेल" : "Export anyway — with DRAFT marker"}
+          </Button>
+        </Alert>
+      )}
       {preview && (
         <Card className="overflow-hidden">
           <div className="flex items-center justify-between border-b border-line px-3 py-2">

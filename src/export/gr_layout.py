@@ -189,13 +189,15 @@ class _GRPDF(FPDF):
 
     MARKDOWN_LINK_COLOR = "#0000ee"
 
-    def __init__(self, lang: str, gr_number: str, total_pages=None):
+    def __init__(self, lang: str, gr_number: str, total_pages=None,
+                 draft_marker=False):
         super().__init__(unit="pt", format="letter")
         self.lang = lang
         self.T = to_devanagari_digits if lang == "mr" else (lambda s: s)
         self.hdr_prefix = L10N[lang]["hdr_prefix"]
         self.hdr_no = self.T(gr_number)
         self.total_pages = total_pages
+        self.draft_marker = draft_marker
         for fam, style, fname in (("noto", "", "NotoSans-Regular.ttf"),
                                   ("noto", "B", "NotoSans-Bold.ttf"),
                                   ("notodev", "", "NotoSansDevanagari-Regular.ttf"),
@@ -207,6 +209,19 @@ class _GRPDF(FPDF):
         self.set_auto_page_break(True, BREAK_MARGIN)
 
     def header(self):
+        # An INCOMPLETE draft must say so on every page: blanks or unverified
+        # references get a pale diagonal मसुदा/DRAFT band. A completed GR never
+        # carries it, so the authentic look is untouched on the happy path.
+        if self.draft_marker:
+            with self.local_context(text_color=(216, 206, 190)):
+                _set_font(self, "B", 52)
+                with self.rotation(38, PAGE_W / 2, PAGE_H / 2):
+                    txt = "मसुदा · DRAFT · अपूर्ण"
+                    self.set_xy(PAGE_W / 2 - self.get_string_width(txt) / 2,
+                                PAGE_H / 2 - 26)
+                    self.cell(self.get_string_width(txt) + 4, 52, txt)
+            _set_font(self)
+            self.set_y(CONTENT_TOP)
         if self.page_no() == 1:
             return
         _set_font(self, "", SIZE_HF)
@@ -363,7 +378,13 @@ def _copy_to(pdf, lang: str, entries):
 def _render_gr(form: dict, total_pages=None) -> _GRPDF:
     f = _normalize(form)
     lang, t = f["lang"], L10N[f["lang"]]
-    pdf = _GRPDF(lang, f["gr_number"], total_pages)
+    # the draft marker fires on an explicit flag (unverified references, set by
+    # the export gate) or automatically whenever a ____ blank survives to render
+    blank_left = any("____" in str(x) for x in
+                     (f["subject"], f["topic"], *f["preamble_paras"],
+                      *f["clauses"], *(f["references"] or [])))
+    pdf = _GRPDF(lang, f["gr_number"], total_pages,
+                 draft_marker=bool(form.get("draft_marker")) or blank_left)
     T = pdf.T
     pdf.add_page()
 
