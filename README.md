@@ -3,9 +3,40 @@
 AI-assisted Government Resolution (GR) drafting for Maharashtra — VJTI AI Hackathon 2026
 ("Shaping Digital Governance", Problem 1: MAHA-GR-ALIGN).
 
-**Live demo**: https://clause-guard.streamlit.app/ (cloud LLM mode; the four sidebar
-demo scenarios are pre-cached — fully local Ollama mode is the recording setup, see
-`DEPLOYMENT.md`).
+**Round 3 (this branch): the app is a React SPA over a FastAPI backend.**
+
+```
+# one-time: build the frontend
+cd web && npm install && npm run build && cd ..
+# run — serves the SPA and the JSON API on one port
+python -m uvicorn api.main:app --port 8000
+```
+
+Open http://localhost:8000 — sign in as `drafter` or `reviewer` (passwords come from
+`CG_DRAFTER_PW` / `CG_REVIEWER_PW` in `.env`; without them a random password is printed
+once at first boot). `uvicorn` warms the embedder, MuRIL and the corpus off the request
+path; the UI shows a warming badge until `/api/health` reports ready. Dev mode:
+`npm run dev` in `web/` proxies `/api` to :8000.
+
+Round-3 highlights on top of round 2:
+
+- **Auth & security** — JWT (argon2 password hashes, 15-min access tokens, rotating
+  httpOnly refresh cookie), drafter/reviewer roles, per-user audit trails, rate limits
+  on the LLM-spending endpoints, magic-byte upload checks, API keys only in headers.
+- **Hallucination rails beyond digits** — precedent-grounded clause wording with a
+  per-clause fidelity audit (plus 107 canonical clause templates mined from the
+  23,331-GR corpus), unsourced entity/month scrub, structural (not blanket) digit
+  numbering allowance, a वाचा existence gate at export, and a मसुदा/DRAFT watermark on
+  any export that still carries blanks or unverified references.
+- **Provider split** — Gemini (flash) drafts Marathi prose, Gemini flash-lite explains
+  conflicts, Groq `openai/gpt-oss-120b` does strict-schema value extraction; fully
+  local Ollama mode remains the demo venue (`LLM_MODE=ollama`; set
+  `CG_OLLAMA_NUM_GPU=0` if the GPU runner is unstable).
+- **Authentic format, further** — clause hanging indents with keep-together, in-body
+  tables, and परिशिष्ट annexure pages, with DOCX parity.
+
+The round-1 Streamlit app remains deployed at https://clause-guard.streamlit.app/
+(branch `master`); round 2 is preserved at tag `v2.0-round2`.
 
 Drafts and reviews Maharashtra GRs against a corpus of real ones:
 
