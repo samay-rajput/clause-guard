@@ -34,6 +34,9 @@ def _load_env():
 _load_env()  # must run BEFORE the model constants read os.environ
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+# high-volume, user-facing prose (conflict explanations) rides the lite tier —
+# ~4x the free daily quota of full Flash after the Dec-2025 quota cuts
+GEMINI_LITE_MODEL = os.environ.get("GEMINI_LITE_MODEL", "gemini-flash-lite-latest")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 # LLM_MODE=ollama routes EVERY call to a local Ollama server (testing without
 # API keys); delete the line from .env to switch back to Gemini/Groq. The disk
@@ -98,13 +101,15 @@ def _post_with_retry(url, headers, payload, tries=4):
     raise LLMError(last or "unknown error")
 
 
-def _gemini(prompt, temperature, max_tokens, json_mode):
+def _gemini(prompt, temperature, max_tokens, json_mode, model=None):
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise LLMError("GEMINI_API_KEY not set (.env)")
+    # key travels in the x-goog-api-key header, never the URL — query strings
+    # end up in proxy/server logs
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={key}"
+        f"{model or GEMINI_MODEL}:generateContent"
     )
     gc = {"temperature": temperature, "maxOutputTokens": max_tokens}
     # Gemini 3 spends output budget on internal thinking; on hard inputs it can
@@ -113,7 +118,8 @@ def _gemini(prompt, temperature, max_tokens, json_mode):
     gc["thinkingConfig"] = {"thinkingLevel": "low"}
     if json_mode:
         gc["responseMimeType"] = "application/json"
-    data = _post_with_retry(url, {"Content-Type": "application/json"},
+    data = _post_with_retry(url, {"Content-Type": "application/json",
+                                  "x-goog-api-key": key},
                             {"contents": [{"parts": [{"text": prompt}]}],
                              "generationConfig": gc})
     try:
@@ -122,17 +128,23 @@ def _gemini(prompt, temperature, max_tokens, json_mode):
         raise LLMError(f"gemini: unexpected response shape: {str(data)[:300]}")
 
 
-def _groq(prompt, temperature, max_tokens, json_mode):
+def _groq(prompt, temperature, max_tokens, json_mode, model=None,
+          json_schema=None):
     key = os.environ.get("GROQ_API_KEY")
     if not key:
         raise LLMError("GROQ_API_KEY not set (.env)")
     payload = {
-        "model": GROQ_MODEL,
+        "model": model or GROQ_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    if json_mode:
+    if json_schema:
+        # schema-GUARANTEED constrained decoding (gpt-oss models only) — the
+        # extractor can no longer return a shape the verifier has to regex-slice
+        payload["response_format"] = {"type": "json_schema", "json_schema": {
+            "name": "extraction", "strict": True, "schema": json_schema}}
+    elif json_mode:
         payload["response_format"] = {"type": "json_object"}
     data = _post_with_retry(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -164,34 +176,48 @@ def _ollama(prompt, temperature, max_tokens, json_mode):
 
 
 def llm(prompt, provider="groq", temperature=0.2, max_tokens=2048,
-        json_mode=False, use_cache=True, refresh=False):
+        json_mode=False, use_cache=True, refresh=False, model=None,
+        json_schema=None):
     """refresh=True skips the cache READ but still stores the fresh result —
-    use it to overwrite a cached-but-malformed response."""
+    use it to overwrite a cached-but-malformed response. `model` overrides the
+    provider's default (cache keys on the resolved model). `json_schema` asks
+    for schema-guaranteed output where the provider supports it (Groq gpt-oss);
+    elsewhere it degrades to plain JSON mode."""
     if LLM_MODE == "ollama":
         provider, model = "ollama", OLLAMA_MODEL
-    else:
+    elif model is None:
         model = GROQ_MODEL if provider == "groq" else GEMINI_MODEL
     if use_cache and not refresh:
         hit = _cached(provider, model, temperature, prompt)
         if hit is not None:
             return hit
-    fn = {"ollama": _ollama, "groq": _groq, "gemini": _gemini}[provider]
-    text = fn(prompt, temperature, max_tokens, json_mode)
+    json_mode = json_mode or bool(json_schema)
+    if provider == "groq":
+        text = _groq(prompt, temperature, max_tokens, json_mode, model=model,
+                     json_schema=json_schema)
+    elif provider == "gemini":
+        text = _gemini(prompt, temperature, max_tokens, json_mode, model=model)
+    else:
+        text = _ollama(prompt, temperature, max_tokens, json_mode)
     if use_cache:
         _store(provider, model, temperature, prompt, text)
     return text
 
 
-def llm_with_fallback(prompt, preferred="groq", **kw):
-    """Try preferred provider; on failure, silently try the other one.
+def llm_with_fallback(prompt, preferred="groq", model=None, json_schema=None, **kw):
+    """Try preferred provider; on failure, silently try the other one. The
+    model override and strict schema apply to the PREFERRED provider only —
+    model IDs are provider-specific and the fallback runs best-effort JSON.
     In ollama mode there is no second provider — the single call is the ball game."""
     if LLM_MODE == "ollama":
-        return llm(prompt, **kw)
+        return llm(prompt, json_mode=kw.pop("json_mode", False) or bool(json_schema), **kw)
     other = "gemini" if preferred == "groq" else "groq"
     try:
-        return llm(prompt, provider=preferred, **kw)
+        return llm(prompt, provider=preferred, model=model,
+                   json_schema=json_schema, **kw)
     except LLMError:
-        return llm(prompt, provider=other, **kw)
+        return llm(prompt, provider=other,
+                   json_mode=kw.pop("json_mode", False) or bool(json_schema), **kw)
 
 
 if __name__ == "__main__":

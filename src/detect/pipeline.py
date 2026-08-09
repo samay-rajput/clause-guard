@@ -121,7 +121,23 @@ CLAUSE 2 (existing): {existing}
 3. value1: What amount/percentage/date/authority/condition does CLAUSE 1 state or presuppose for that benefit? Quote it briefly (e.g. "50 टक्के", "Rs. 2,000", "31 March 2025"). Empty string if none.
 4. value2: Same for CLAUSE 2 (e.g. "100 टक्के"). A value counts even if presupposed ("students entitled to 100% reimbursement" -> "100 टक्के"). Empty string if none.
 
+If a clause states different values for DIFFERENT groups or categories, report only the value for the group CLAUSE 1 addresses — never the other group's value.
+
 Output ONLY JSON: {{"same_scheme": true|false, "benefit": "...", "value1": "...", "value2": "..."}}"""
+
+# schema-guaranteed shape on Groq gpt-oss (strict constrained decoding);
+# other providers degrade to best-effort JSON mode
+VERIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "same_scheme": {"type": "boolean"},
+        "benefit": {"type": "string"},
+        "value1": {"type": "string"},
+        "value2": {"type": "string"},
+    },
+    "required": ["same_scheme", "benefit", "value1", "value2"],
+    "additionalProperties": False,
+}
 
 
 def _script(s: str) -> str:
@@ -192,20 +208,34 @@ def _is_financial_year_label(v: str) -> bool:
 
 
 def _grounded(value: str, text: str) -> bool:
-    """An extracted NUMERIC value only counts if its digits actually occur in
-    the clause it was extracted from — the deterministic guard against the
-    extractor hallucinating a number (e.g. reporting '50 टक्के' for a clause
-    that only ever says '100 टक्के'). Non-numeric values pass through: they
-    are legitimately paraphrased."""
+    """An extracted value only counts if it traces to the clause it was
+    extracted from. NUMERIC values: every digit run must occur in the clause —
+    the deterministic guard against the extractor hallucinating a number
+    (e.g. reporting '50 टक्के' for a clause that only ever says '100 टक्के').
+    NON-NUMERIC values (authority/procedure): at least half the value's
+    word tokens must appear in the clause — paraphrase survives, but a
+    fabricated authority name can no longer drive a verdict. Cross-script
+    extractions pass through here; _values_conflict's same-script rule is
+    the guard on that axis."""
     tr = str.maketrans("०१२३४५६७८९", "0123456789")
     strip = lambda s: re.sub(r"(?<=[0-9०-९]),(?=[0-9०-९])", "", s or "")  # noqa: E731
     runs = {x.translate(tr) for x in
             re.findall(r"[0-9०-९]+", strip(value))}
-    if not runs:
+    if runs:
+        text_runs = {x.translate(tr) for x in
+                     re.findall(r"[0-9०-९]+", strip(text))}
+        return runs <= text_runs
+    v = (value or "").strip().lower()
+    if not v:
         return True
-    text_runs = {x.translate(tr) for x in
-                 re.findall(r"[0-9०-९]+", strip(text))}
-    return runs <= text_runs
+    if _script(v) != "none" and _script(v) != _script((text or "").lower()) \
+            and _script((text or "").lower()) != "mixed":
+        return True                       # cross-script: cannot token-match
+    tokens = [w for w in re.findall(r"[a-z]{3,}|[ऀ-ॿ]{2,}", v)]
+    if not tokens:
+        return True
+    hits = sum(1 for w in tokens if w in (text or "").lower())
+    return hits * 2 >= len(tokens)
 
 EXPLAIN_PROMPT = """A draft Maharashtra Government Resolution contains a clause that conflicts with an existing GR. Explain the conflict precisely for a government drafting officer.
 
@@ -259,12 +289,16 @@ def _json_slice(text):
 
 
 def explain_conflict(draft, existing, meta, reason):
+    from clients import GEMINI_LITE_MODEL
     gn = meta.get("gr_number")
     gr_id = gn if gn and gn != "?" else meta.get("gr_code", "?")
     label = f"{meta.get('department','?')} GR {gr_id} dated {meta.get('date','?')}"
     prompt = EXPLAIN_PROMPT.format(draft=draft[:900], existing=existing[:900],
                                    gr_label=label, reason=reason)
-    return llm_with_fallback(prompt, preferred="gemini", temperature=0.2, max_tokens=1024)
+    # explanations are the highest-volume Gemini call — the lite tier has ~4x
+    # the free daily headroom of full Flash
+    return llm_with_fallback(prompt, preferred="gemini", model=GEMINI_LITE_MODEL,
+                             temperature=0.2, max_tokens=1024)
 
 
 def review_draft(draft_text: str, top_k=10, max_draft_clauses=25, progress=None):
@@ -311,7 +345,7 @@ def review_draft(draft_text: str, top_k=10, max_draft_clauses=25, progress=None)
         try:
             raw = llm_with_fallback(
                 VERIFY_PROMPT.format(draft=p["draft"][:700], existing=p["candidate"][:700]),
-                temperature=0.0, max_tokens=512, json_mode=True)
+                temperature=0.0, max_tokens=512, json_schema=VERIFY_SCHEMA)
             chk = json.loads(_json_slice(raw))
             v1, v2 = chk.get("value1", ""), chk.get("value2", "")
             if _is_financial_year_label(v1) and _is_financial_year_label(v2) and v1 != v2:
