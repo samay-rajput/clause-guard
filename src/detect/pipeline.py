@@ -63,14 +63,20 @@ def muril_available():
     return os.environ.get("USE_MURIL", "1") != "0" and (MURIL_DIR / "config.json").exists()
 
 
+_muril_lock = __import__("threading").Lock()
+
+
 def _muril_load():
-    if _muril["model"] is None:
-        import torch
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer
-        _muril["tok"] = AutoTokenizer.from_pretrained(str(MURIL_DIR))
-        _muril["model"] = AutoModelForSequenceClassification.from_pretrained(
-            str(MURIL_DIR), dtype=torch.float32)
-        _muril["model"].eval()
+    # the lock matters in a server: a warm-up thread and the first request
+    # racing from_pretrained() yields a half-initialized (meta-device) model
+    with _muril_lock:
+        if _muril["model"] is None:
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+            _muril["tok"] = AutoTokenizer.from_pretrained(str(MURIL_DIR))
+            _muril["model"] = AutoModelForSequenceClassification.from_pretrained(
+                str(MURIL_DIR), dtype=torch.float32)
+            _muril["model"].eval()
     return _muril["model"], _muril["tok"]
 
 
@@ -316,7 +322,11 @@ def review_draft(draft_text: str, top_k=10, max_draft_clauses=25, progress=None)
                     and _grounded(v1, p["draft"])
                     and _grounded(v2, p["candidate"])
                     and _values_conflict(v1, v2)):
+                # the extracted values ride along structurally — consumers must
+                # not have to regex them back out of the reason string
                 v = {"label": "conflict",
+                     "value1": v1, "value2": v2,
+                     "benefit": chk.get("benefit") or "",
                      "reason": f"For {chk.get('benefit') or 'the same benefit'}, "
                                f"the draft specifies '{chk.get('value1')}' but the "
                                f"existing GR specifies '{chk.get('value2')}'."}
@@ -332,7 +342,10 @@ def review_draft(draft_text: str, top_k=10, max_draft_clauses=25, progress=None)
                 # a failed explanation must never discard an already-verified
                 # conflict — the code-built reason string stands on its own
                 expl = f"_(LLM explanation unavailable: {e})_"
-            conflicts.append({**p, "reason": v["reason"], "explanation": expl})
+            conflicts.append({**p, "reason": v["reason"], "explanation": expl,
+                              "value1": v.get("value1", ""),
+                              "value2": v.get("value2", ""),
+                              "benefit": v.get("benefit", "")})
     return {"n_clauses": len(clauses), "clauses": clauses,
             "n_pairs": len(pairs), "n_muril_flagged": (len(screened) if muril_labels else None),
             "verdicts": verdicts, "pairs": screened, "conflicts": conflicts}

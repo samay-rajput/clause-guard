@@ -29,8 +29,16 @@ def model():
     return _model
 
 
+_client = None
+
+
 def client():
-    return chromadb.PersistentClient(path=DB_DIR)
+    # one PersistentClient per process — retrieve() runs per draft clause and
+    # a long-lived server must not reopen the sqlite/hnsw store on every query
+    global _client
+    if _client is None:
+        _client = chromadb.PersistentClient(path=DB_DIR)
+    return _client
 
 
 def build(corpus_path=None, max_clauses_per_gr=60, dedupe=False):
