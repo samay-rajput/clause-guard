@@ -121,9 +121,14 @@ CLAUSE 2 (existing): {existing}
 3. value1: What amount/percentage/date/authority/condition does CLAUSE 1 state or presuppose for that benefit? Quote it briefly (e.g. "50 टक्के", "Rs. 2,000", "31 March 2025"). Empty string if none.
 4. value2: Same for CLAUSE 2 (e.g. "100 टक्के"). A value counts even if presupposed ("students entitled to 100% reimbursement" -> "100 टक्के"). Empty string if none.
 
-If a clause states different values for DIFFERENT groups or categories, report only the value for the group CLAUSE 1 addresses — never the other group's value.
-
 Output ONLY JSON: {{"same_scheme": true|false, "benefit": "...", "value1": "...", "value2": "..."}}"""
+
+# ROUND-3 NOTE: a "report only the value for CLAUSE 1's group" instruction was
+# trialled here for the two-valued-clause limitation and REVERTED — llama3.1
+# reads it as scheme-splitting and flips same_scheme to false on true conflicts
+# (measured on the Scenario A anchor pair). The two-value discipline lives in
+# the cloud path's strict schema + _grounded instead; the prompt must stay
+# byte-identical to round 2 so the warmed cache remains valid.
 
 # schema-guaranteed shape on Groq gpt-oss (strict constrained decoding);
 # other providers degrade to best-effort JSON mode
@@ -326,7 +331,10 @@ def review_draft(draft_text: str, top_k=10, max_draft_clauses=25, progress=None)
         if progress:
             progress(f"MuRIL screening {len(pairs)} pairs (fine-tuned, local)")
         try:
-            muril_labels = muril_screen(pairs)
+            # batch_size=1: a pair's label must be a pure function of its own
+            # text — fp32 batching couples borderline logits to whatever else
+            # shares the batch, and the flag set stops being reproducible
+            muril_labels = muril_screen(pairs, batch_size=1)
             screened = [p for p, lab in zip(pairs, muril_labels)
                         if lab == "contradiction"]
         except Exception as e:

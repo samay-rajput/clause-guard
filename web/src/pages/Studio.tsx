@@ -6,9 +6,66 @@ import { api } from "../lib/api";
 import { t } from "../lib/strings";
 import { useApp } from "../store/app";
 import type { Conflict, FullReview, GRForm, Generated, Precedent } from "../lib/types";
+import { ChatDock } from "../components/ChatDock";
 import { ConflictCard } from "../components/ConflictCard";
 import { ExportBar } from "../components/Exports";
+import { GRPaper, type PaperTable } from "../components/GRPaper";
 import { Alert, Badge, Button, Card, Input, Label, Spinner, Textarea } from "../components/ui";
+
+/** GR types the way real drafting desks think — each preset seeds the subject
+ * pattern and skeleton clauses (____ slots keep the blank-blocker honest). */
+const GR_TYPES: Array<{
+  id: string; mr: string; en: string;
+  subject: { mr: string; en: string };
+  clauses: { mr: string[]; en: string[] };
+}> = [
+  {
+    id: "funds", mr: "निधी वितरण", en: "Funds release",
+    subject: { mr: "सन ____ करिता ____ योजनेसाठी निधी वितरित करण्याबाबत.", en: "Release of funds for ____ for the year ____." },
+    clauses: {
+      mr: ["सन ____ या आर्थिक वर्षाकरिता ____ योजनेसाठी रु.____ इतका निधी वितरित करण्यास शासन मान्यता देण्यात येत आहे.",
+           "सदर खर्च ____ या लेखाशीर्षाखाली मंजूर अनुदानातून भागविण्यात यावा."],
+      en: ["Government approval is hereby accorded to release funds of Rs. ____ for the ____ scheme for the financial year ____.",
+           "The expenditure shall be met from the sanctioned grants under budget head ____."],
+    },
+  },
+  {
+    id: "scheme", mr: "योजनेस मान्यता", en: "Scheme approval",
+    subject: { mr: "____ ही योजना राबविण्यास मान्यता देण्याबाबत.", en: "Approval to implement the ____ scheme." },
+    clauses: {
+      mr: ["____ ही योजना राबविण्यास शासन मान्यता देण्यात येत आहे.",
+           "योजनेच्या अंमलबजावणीची सविस्तर कार्यपद्धती स्वतंत्रपणे निर्गमित करण्यात येईल."],
+      en: ["Government approval is hereby accorded to implement the ____ scheme.",
+           "Detailed implementation procedure shall be issued separately."],
+    },
+  },
+  {
+    id: "admin", mr: "प्रशासकीय मान्यता", en: "Administrative approval",
+    subject: { mr: "____ या कामास प्रशासकीय मान्यता देण्याबाबत.", en: "Administrative approval for ____." },
+    clauses: {
+      mr: ["____ या कामास रु.____ इतक्या रकमेच्या अंदाजपत्रकास प्रशासकीय मान्यता देण्यात येत आहे."],
+      en: ["Administrative approval is hereby accorded to ____ with an estimated cost of Rs. ____."],
+    },
+  },
+  {
+    id: "committee", mr: "समिती गठन", en: "Committee constitution",
+    subject: { mr: "____ करिता समिती गठित करण्याबाबत.", en: "Constitution of a committee for ____." },
+    clauses: {
+      mr: ["____ करिता खालीलप्रमाणे समिती गठित करण्यात येत आहे.",
+           "समितीने आपला अहवाल ____ कालावधीत शासनास सादर करावा."],
+      en: ["A committee is hereby constituted for ____ as follows.",
+           "The committee shall submit its report to the Government within ____."],
+    },
+  },
+  {
+    id: "resanction", mr: "वार्षिक पुनर्मंजुरी", en: "Annual re-sanction",
+    subject: { mr: "सन ____ करिता ____ योजना पुढे चालू ठेवण्याबाबत.", en: "Continuation of the ____ scheme for the year ____." },
+    clauses: {
+      mr: ["सन ____ या आर्थिक वर्षाकरिता ____ योजना पुढे चालू ठेवण्यास मान्यता देण्यात येत आहे."],
+      en: ["Approval is hereby accorded to continue the ____ scheme for the financial year ____."],
+    },
+  },
+];
 
 interface PrefillMeta {
   ai_used?: boolean;
@@ -40,6 +97,9 @@ export default function Studio() {
   const [useBrief, setUseBrief] = useState(false);
   const [brief, setBrief] = useState("");
   const [nClauses, setNClauses] = useState(3);
+  const [tables, setTables] = useState<PaperTable[]>([]);
+  const [grType, setGrType] = useState<string | null>(null);
+  const [showTableEditor, setShowTableEditor] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [steps, setSteps] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -58,20 +118,46 @@ export default function Studio() {
     return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
   }, [topic]);
 
-  function fillFromForm(f: GRForm) {
+  function fillFromForm(f: GRForm & { tables?: PaperTable[] }) {
     setFields({
       subject: f.subject ?? "",
       department: f.department ?? "",
       gr_number: f.gr_number ?? "",
       date: (f.date ?? new Date().toISOString()).slice(0, 10),
-      references: (f.references ?? []).map((r) => r.text).join("\n"),
+      references: (f.references ?? []).map((r) => (typeof r === "string" ? r : r.text)).join("\n"),
       background: f.background ?? "",
       clauses: (f.clauses ?? []).join("\n"),
       budget_head: f.budget_head ?? "",
       signatory: f.signatory ?? "",
       designation: f.designation ?? "",
     });
+    if (f.tables) setTables(f.tables);
   }
+
+  function applyPreset(id: string) {
+    const preset = GR_TYPES.find((t) => t.id === id);
+    if (!preset) return;
+    setGrType(id);
+    setFields((f) => ({
+      ...f,
+      subject: f.subject || preset.subject[draftLang],
+      clauses: f.clauses || preset.clauses[draftLang].join("\n"),
+    }));
+  }
+
+  // the live paper renders exactly what would be generated from the form
+  const paperForm: GRForm = {
+    lang: draftLang,
+    subject: fields.subject, department: fields.department,
+    gr_number: fields.gr_number, date: fields.date,
+    references: fields.references.split("\n").filter((r) => r.trim()).map((r) => ({ text: r })),
+    background: fields.background,
+    clauses: fields.clauses.split("\n").filter((c) => c.trim()),
+    budget_head: fields.budget_head, signatory: fields.signatory,
+    designation: fields.designation,
+  };
+  const subjectBad = draftLang === "mr" && fields.subject.trim() !== "" &&
+    !fields.subject.trim().endsWith("बाबत.");
 
   async function doPrefill() {
     setBusy("prefill");
@@ -118,7 +204,7 @@ export default function Studio() {
     }
   }
 
-  function buildForm(): GRForm {
+  function buildForm(): GRForm & { tables: PaperTable[] } {
     const extras: Partial<GRForm> = {};
     for (const k of ["topic", "dept_code", "copy_to", "precedents"] as const) {
       if (prefill?.[k] != null) (extras as any)[k] = prefill[k];
@@ -136,9 +222,25 @@ export default function Studio() {
       budget_head: fields.budget_head,
       signatory: fields.signatory,
       designation: fields.designation,
+      tables,
       ai_used: Boolean(meta?.ai_used),
       ai_error: meta?.ai_error ?? null,
     };
+  }
+
+  function onChatApplied(out: any) {
+    if (!out?.form) return;
+    fillFromForm(out.form);
+    setPrefill((p) => (p ? { ...p, ...out.form } : out.form));
+    if (out.generated) {
+      setGrForm(out.generated.form ?? out.form);
+      setGenerated({
+        ...out.generated,
+        score: out.score, terms: out.terms, short_clauses: [],
+      });
+      setReview(null);
+      setFixApplied(null);
+    }
   }
 
   async function doGenerate(check: boolean) {
@@ -220,7 +322,8 @@ export default function Studio() {
   const set = (k: keyof typeof emptyFields) => (e: any) => setFields((f) => ({ ...f, [k]: e.target.value }));
 
   return (
-    <div className="grid gap-4">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(380px,44%)]">
+    <div className="grid min-w-0 gap-4">
       {/* step 1: topic */}
       <Card className="grid gap-3 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -236,6 +339,22 @@ export default function Studio() {
               </button>
             ))}
           </div>
+        </div>
+        {/* GR type presets — the way real drafting desks start */}
+        <div className="flex flex-wrap gap-1.5">
+          {GR_TYPES.map((gt) => (
+            <button
+              key={gt.id}
+              onClick={() => applyPreset(gt.id)}
+              className={`cursor-pointer rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                grType === gt.id
+                  ? "border-navy bg-navy text-white"
+                  : "border-line bg-card text-muted hover:border-navy/40 hover:text-ink"
+              }`}
+            >
+              {gt[uiLang]}
+            </button>
+          ))}
         </div>
         <div>
           <Label>{t("topicLabel", uiLang)}</Label>
@@ -324,7 +443,24 @@ export default function Studio() {
       {/* step 2: the reviewed form */}
       <Card className="grid gap-3 p-4">
         <div className="grid gap-3 md:grid-cols-2">
-          <div><Label>{t("subject", uiLang)}</Label><Input value={fields.subject} onChange={set("subject")} /></div>
+          <div>
+            <Label>{t("subject", uiLang)}</Label>
+            <Input value={fields.subject} onChange={set("subject")} />
+            {subjectBad && (
+              <div className="mt-1 flex items-center gap-2 text-xs text-warn">
+                ⚠ {uiLang === "mr" ? 'विषय-ओळ "बाबत." ने संपली पाहिजे' : 'Marathi subject must end with "बाबत."'}
+                <button
+                  className="cursor-pointer rounded border border-warn/40 px-1.5 font-semibold hover:bg-warn-soft"
+                  onClick={() => setFields((f) => ({
+                    ...f,
+                    subject: f.subject.trim().replace(/[.।]*$/, "") + "बाबत.",
+                  }))}
+                >
+                  {uiLang === "mr" ? "दुरुस्त करा" : "fix"}
+                </button>
+              </div>
+            )}
+          </div>
           <div><Label>{t("department", uiLang)}</Label><Input value={fields.department} onChange={set("department")} /></div>
           <div><Label>{t("grNumber", uiLang)}</Label><Input value={fields.gr_number} onChange={set("gr_number")} /></div>
           <div><Label>{t("date", uiLang)}</Label><Input type="date" value={fields.date} onChange={set("date")} /></div>
@@ -356,6 +492,29 @@ export default function Studio() {
             <div><Label>{t("opClauses", uiLang)}</Label><Textarea rows={5} value={fields.clauses} onChange={set("clauses")} /></div>
           </>
         )}
+        {/* tables — rate schedules / allocations, rendered inside the GR body */}
+        <div className="grid gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Label>{uiLang === "mr" ? "तक्ते (कलमानंतर)" : "Tables (after a clause)"}</Label>
+            {tables.map((tb, i) => (
+              <Badge key={i} tone="info">
+                {uiLang === "mr" ? "तक्ता" : "table"} {i + 1} → {uiLang === "mr" ? "कलम" : "clause"} {tb.after_clause}
+                <button className="ml-1 cursor-pointer font-bold"
+                  onClick={() => setTables((ts) => ts.filter((_, j) => j !== i))}>✕</button>
+              </Badge>
+            ))}
+            <Button variant="ghost" onClick={() => setShowTableEditor((v) => !v)}>
+              {showTableEditor ? "▲" : "＋"} {uiLang === "mr" ? "तक्ता जोडा" : "Add table"}
+            </Button>
+          </div>
+          {showTableEditor && (
+            <TableEditor
+              nClauses={fields.clauses.split("\n").filter((c) => c.trim()).length}
+              onAdd={(tb) => { setTables((ts) => [...ts, tb]); setShowTableEditor(false); }}
+              lang={uiLang}
+            />
+          )}
+        </div>
         <div className="grid gap-3 md:grid-cols-3">
           <div><Label>{t("budgetHead", uiLang)}</Label><Input value={fields.budget_head} onChange={set("budget_head")} /></div>
           <div><Label>{t("signatory", uiLang)}</Label><Input value={fields.signatory} onChange={set("signatory")} /></div>
@@ -435,6 +594,63 @@ export default function Studio() {
           <Textarea rows={14} readOnly value={generated.draft} className="font-mono text-xs leading-6" />
         </Card>
       )}
+    </div>
+
+    {/* right column: the living GR + the conversation that edits it */}
+    <div className="grid content-start gap-4 xl:sticky xl:top-16">
+      <GRPaper form={paperForm} tables={tables} />
+      <ChatDock
+        buildForm={buildForm}
+        onApplied={onChatApplied}
+        disabled={!fields.subject.trim()}
+      />
+    </div>
+    </div>
+  );
+}
+
+function TableEditor({
+  nClauses,
+  onAdd,
+  lang,
+}: {
+  nClauses: number;
+  onAdd: (tb: PaperTable) => void;
+  lang: "mr" | "en";
+}) {
+  const [headers, setHeaders] = useState(lang === "mr" ? "जिल्हा, रक्कम (लाख)" : "District, Amount (lakh)");
+  const [rows, setRows] = useState("");
+  const [after, setAfter] = useState(1);
+  return (
+    <div className="grid gap-2 rounded-lg border border-line bg-paper p-3">
+      <div className="grid gap-2 md:grid-cols-[1fr_8rem]">
+        <div>
+          <Label>{lang === "mr" ? "स्तंभ-शीर्षके (स्वल्पविरामाने)" : "Headers (comma-separated)"}</Label>
+          <Input value={headers} onChange={(e) => setHeaders(e.target.value)} />
+        </div>
+        <div>
+          <Label>{lang === "mr" ? "कोणत्या कलमानंतर" : "After clause"}</Label>
+          <Input type="number" min={1} max={Math.max(1, nClauses)} value={after}
+            onChange={(e) => setAfter(Number(e.target.value))} />
+        </div>
+      </div>
+      <div>
+        <Label>{lang === "mr" ? "ओळी — प्रत्येक ओळीत एक; घर | ने वेगळे" : "Rows — one per line; cells split by |"}</Label>
+        <Textarea rows={3} value={rows} onChange={(e) => setRows(e.target.value)}
+          placeholder={lang === "mr" ? "पुणे | 50\nनागपूर | 35" : "Pune | 50\nNagpur | 35"} />
+      </div>
+      <Button
+        variant="outline"
+        disabled={!rows.trim()}
+        onClick={() => onAdd({
+          after_clause: Math.max(1, Math.min(after, Math.max(1, nClauses))),
+          headers: headers.split(",").map((h) => h.trim()).filter(Boolean),
+          rows: rows.split("\n").filter((r) => r.trim())
+            .map((r) => r.split("|").map((c) => c.trim())),
+        })}
+      >
+        ✓ {lang === "mr" ? "तक्ता जोडा" : "Add table"}
+      </Button>
     </div>
   );
 }

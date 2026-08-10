@@ -150,24 +150,44 @@ def check_against_corpus(corpus_path) -> str | None:
 
 def retrieve(query_text: str, k=5, exclude_gr=None, n_results=None):
     col = client().get_collection(COLLECTION)
-    emb = model().encode([f"query: {query_text}"], normalize_embeddings=True)
+    # Deterministic query encoding: multi-threaded CPU matmul varies its
+    # reduction order run-to-run, and on a dense index those last-decimal
+    # differences reshuffle borderline ranks — the near-dup suppressor then
+    # drops DIFFERENT lookalikes each run and the candidate set flickers.
+    # Single-threading just this encode pins the vector bytes; MuRIL and the
+    # bulk index build keep their threads.
+    import torch
+    n_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        emb = model().encode([f"query: {query_text}"], normalize_embeddings=True)
+    finally:
+        torch.set_num_threads(n_threads)
     # the fetch width has to grow with the index: at full corpus scale the old
     # hard cap of 40 could be filled entirely by copies of one template clause
     res = col.query(query_embeddings=emb.tolist(),
                     n_results=n_results or min(k * 8 + 10, 120))
+    # Deterministic candidate order BEFORE suppression: thousands of
+    # near-identical reference lines tie on distance to the 6th decimal, and
+    # whichever copy the ANN returns first survives the near-dup filter. A
+    # stable (rounded-distance, id) sort makes the surviving set identical
+    # across runs — without it the candidate pairs (and therefore the MuRIL
+    # flags and the frozen baseline) flicker between processes.
+    hits = sorted(
+        zip(res["ids"][0], res["documents"][0], res["metadatas"][0],
+            res["distances"][0]),
+        key=lambda h: (round(h[3], 6), h[0]))
     out, seen_text = [], set()
-    for i in range(len(res["ids"][0])):
-        meta = res["metadatas"][0][i]
+    for hid, doc, meta, dist in hits:
         if exclude_gr and meta["gr_code"] == exclude_gr:
             continue
-        doc = res["documents"][0][i]
         # near-duplicate suppression: identical template clauses recur across
         # dozens of GRs and would flood the top-k, crowding out real matches
         key = " ".join(doc.split())[:120]
         if key in seen_text:
             continue
         seen_text.add(key)
-        out.append({"clause": doc, "distance": res["distances"][0][i], **meta})
+        out.append({"clause": doc, "distance": dist, **meta})
         if len(out) >= k:
             break
     return out

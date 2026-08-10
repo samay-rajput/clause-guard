@@ -158,7 +158,10 @@ def _groq(prompt, temperature, max_tokens, json_mode, model=None,
 
 
 def _ollama(prompt, temperature, max_tokens, json_mode):
-    options = {"temperature": temperature, "num_predict": max_tokens}
+    # seed pins sampling: temperature 0 alone is NOT reproducible across Ollama
+    # runs/hardware paths, and a borderline same_scheme judgment that flips
+    # between runs poisons the warmed cache with whichever answer came first
+    options = {"temperature": temperature, "num_predict": max_tokens, "seed": 42}
     # CG_OLLAMA_NUM_GPU=0 forces CPU inference — the 4 GB laptop GPU can crash
     # the runner ("terminated: CUDA error") on partial offload of llama3.1
     if (ng := os.environ.get("CG_OLLAMA_NUM_GPU")) is not None:

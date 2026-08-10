@@ -22,6 +22,25 @@ DEFAULT_CORPUS = "corpus.jsonl"
 POINTER_FILE = "corpus.active"
 
 
+def _load_env():
+    """Load .env with setdefault semantics HERE, not only in clients.py.
+
+    CG_DB_DIR/CG_CORPUS from .env used to apply only if clients.py happened to
+    be imported before this module — scripts that imported build_index first
+    silently ran against the DEFAULT index while the app ran against the .env
+    one. Corpus/index selection must never depend on import order."""
+    env = ROOT / ".env"
+    if env.exists():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, _, v = line.partition("=")
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_env()
+
+
 def default_corpus_path() -> Path:
     env = os.environ.get("CG_CORPUS")
     if env:

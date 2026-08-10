@@ -2,6 +2,8 @@
 autonomous topic→GR (job), form/brief generation, one-click conflict fix."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from pydantic import BaseModel, Field
+
 from .. import domain, jobs
 from ..authcore import get_current_user
 from ..limits import LLM_LIMIT, limiter
@@ -9,6 +11,42 @@ from ..schemas import (ApplyFixRequest, AutodraftRequest, GenerateRequest,
                        PrefillRequest, PreviewRequest)
 
 router = APIRouter(prefix="/api/generate", tags=["generate"])
+
+
+class ChatEditRequest(BaseModel):
+    form: dict
+    message: str = Field(min_length=1, max_length=2000)
+
+
+@router.get("/clause-templates")
+def clause_templates(dept_code: str = "", k: int = 12,
+                     user: dict = Depends(get_current_user)):
+    """Canonical clause templates mined from the full corpus (verbatim
+    government wording, per department)."""
+    from prefill import templates_for
+    return {"templates": templates_for(dept_code, k=max(1, min(k, 12)))}
+
+
+@router.post("/chat-edit")
+@limiter.limit(LLM_LIMIT)
+def chat_edit(request: Request, req: ChatEditRequest,
+              user: dict = Depends(get_current_user)):
+    """Conversational editing: the LLM proposes form OPERATIONS, the server
+    applies them under the digit/entity rails and re-renders deterministically.
+    The chat can never write draft text directly."""
+    from chatedit import chat_edit as run_chat_edit
+    out = run_chat_edit(domain.coerce_date(req.form), req.message)
+    if out.get("error"):
+        raise HTTPException(502, out["error"])
+    if g := out.get("generated"):
+        out["score"] = domain.score(g["draft"])
+        out["terms"] = domain.check_terminology(g["draft"])
+        try:
+            domain.audit_append(user["username"], g["draft"], score=out["score"],
+                                terms=out["terms"], source="chat-edit")
+        except Exception:
+            pass
+    return out
 
 
 @router.post("/preview")
