@@ -1,5 +1,29 @@
 # Evaluation — conflict classification on the held-out test set
 
+## Round 3 (Aug 10, 2026): the clean-text retrain
+
+The screener was re-fine-tuned on pairs generated from the clean mahGRs corpus —
+new teacher (`gemini-flash-lite`, the labeler the round-1 audit validated at 0.88
+vs adjudicated truth, replacing the ~26%-noise llama-8B), mixed Marathi/English
+hypotheses (the C2 false-positive lesson), plus 889 real mined pairs
+(number-swap / truncation / hard-neutral). Trained locally (RTX 2050, fp16,
+same protocol as the Colab notebook: seed 42, effective batch 16, lr 2e-5,
+5 epochs, best-of-epochs by dev macro-F1).
+
+| System | Macro-F1 | Accuracy | Contradiction F1 | Consistent F1 | Neutral F1 |
+|---|---|---|---|---|---|
+| **MuRIL-base retrained on clean pairs (n_test=509)** | **0.9188** | 0.9194 | 0.892 | 0.870 | 0.994 |
+
+> **Not comparable head-to-head with the 0.9134 below**: different test set
+> (3,891-pair clean dataset, group-split by seed clause, TF-IDF probe 0.674),
+> different teacher, different corpus. What IS directly observable: the old
+> garbled-trained screener failed to flag near-identical clean-text variants of
+> the demo's anchor conflict on the full 23,331-GR corpus; the retrained model
+> flags them stably (verified per-pair, batch-independent). Dataset:
+> `data/pairs_clean.jsonl`; metrics: `model/muril_gr_conflict_fp16/metrics_finetuned.json`.
+
+## Round 1 record (garbled corpus) — kept as the honest history
+
 > All rows are scored on the SAME held-out 563-pair test set (grouped split by
 > seed clause, seed 42). Zero-shot judges see 5 pairs per request (few-shot
 > JSON). Numbers are written by scripts from `results/*.json`, not by hand.

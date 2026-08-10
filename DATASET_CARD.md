@@ -1,5 +1,22 @@
 # Dataset card — GR clause-conflict pairs (synthetic labels, real clause grounding)
 
+> **Round-3 regeneration, Aug 10 2026 — the outstanding work below is DONE.**
+> A new dataset was generated from the clean mahGRs corpus: **3,891 pairs**
+> (1,355 contradiction / 1,299 consistent / 1,237 neutral) = 3,002 synthetic
+> (teacher **gemini-flash-lite-latest** — the labeler the round-1 blind audit
+> validated at 0.88 vs adjudicated truth — with **mixed Marathi/English
+> hypotheses**, a deliberate protocol change after the C2 cross-script
+> false-positive lesson) + 889 deterministic mined/augmented pairs. Gates:
+> exact dedup, group split by seed clause (train 3,129 / dev 253 / test 509,
+> leakage check PASSED), TF-IDF probe macro-F1 **0.674** (< 0.75 too-easy line).
+> Retrained screener: macro-F1 **0.9188** on the new test set (per-class and
+> environment in `model/muril_gr_conflict_fp16/metrics_finetuned.json`); the
+> table in EVAL_TABLE.md explains why this is not head-to-head comparable with
+> the 0.9134 garbled-era row. Files: `data/pairs_clean.jsonl`,
+> `data/pairs_{train,dev,test}.jsonl`; garbled-era dataset archived as
+> `data/pairs_*.garbled.jsonl`. Everything below this note is the round-1
+> record, kept as honest history.
+
 > **Corpus change, Aug 6 2026 — read this before using the numbers below.**
 > Every measurement in this card was made on the **archival-text corpus**
 > (`data/corpus.jsonl`), whose Marathi is corrupted by the legacy-font extraction bug.
