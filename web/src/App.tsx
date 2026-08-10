@@ -3,7 +3,7 @@ import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-rou
 import { api, setSessionListener } from "./lib/api";
 import { t } from "./lib/strings";
 import { useApp } from "./store/app";
-import { Spinner, cx } from "./components/ui";
+import { LangSwitch, Spinner, cx } from "./components/ui";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Studio from "./pages/Studio";
@@ -50,12 +50,7 @@ function Shell() {
             </nav>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <button
-              onClick={() => setLang(lang === "mr" ? "en" : "mr")}
-              className="cursor-pointer rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted hover:text-ink"
-            >
-              {t("languageToggle", lang)}
-            </button>
+            <LangSwitch lang={lang} onChange={setLang} />
             <span className="hidden text-xs text-muted md:inline">
               {user?.username} · {user?.role}
             </span>

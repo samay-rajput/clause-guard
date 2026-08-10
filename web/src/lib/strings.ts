@@ -1,4 +1,5 @@
-/** Bilingual UI strings. Marathi first — the product drafts Marathi GRs. */
+/** Bilingual UI strings — two complete interfaces, switched by the header
+ * control: full Marathi or full English. Never mixed on one page. */
 export type Lang = "mr" | "en";
 
 const S = {

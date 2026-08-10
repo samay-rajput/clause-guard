@@ -83,7 +83,9 @@ const emptyFields = {
 
 export default function Studio() {
   const uiLang = useApp((s) => s.lang);
-  const [draftLang, setDraftLang] = useState<"mr" | "en">("mr");
+  // the document's language follows the interface language initially — an
+  // English-mode user drafts English GRs unless they flip the document toggle
+  const [draftLang, setDraftLang] = useState<"mr" | "en">(uiLang);
   const [topic, setTopic] = useState("");
   const [preview, setPreview] = useState<Precedent[]>([]);
   const [prefill, setPrefill] = useState<GRForm | null>(null);

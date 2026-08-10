@@ -156,6 +156,41 @@ export function Alert({ tone, children }: { tone: Tone; children: ReactNode }) {
   );
 }
 
+/** Prominent language switcher — two complete interfaces, one click apart. */
+export function LangSwitch({
+  lang,
+  onChange,
+  size = "md",
+}: {
+  lang: "mr" | "en";
+  onChange: (l: "mr" | "en") => void;
+  size?: "md" | "lg";
+}) {
+  return (
+    <div
+      className={cx(
+        "inline-flex rounded-full border border-line bg-paper p-0.5",
+        size === "lg" && "w-full justify-center",
+      )}
+      title="भाषा · Language"
+    >
+      {([["mr", "मराठी"], ["en", "English"]] as const).map(([id, label]) => (
+        <button
+          key={id}
+          onClick={() => onChange(id)}
+          className={cx(
+            "cursor-pointer rounded-full font-semibold transition-all",
+            size === "lg" ? "flex-1 px-4 py-1.5 text-sm" : "px-3 py-1 text-xs",
+            lang === id ? "bg-navy text-white shadow-sm" : "text-muted hover:text-ink",
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** red → green comparison chips (conflict values, terminology corrections) */
 export function CompareChips({ left, right, note }: { left: string; right: string; note?: string }) {
   return (

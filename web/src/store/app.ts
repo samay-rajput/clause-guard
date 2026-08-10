@@ -23,7 +23,7 @@ export const useApp = create<AppState>()(
       setSessionChecked: () => set({ sessionChecked: true }),
     }),
     {
-      name: "clauseguard-ui",
+      name: "clauseguard-ui-v2",   // v2: three-state language (both is default)
       partialize: (s) => ({ lang: s.lang }), // only the language survives reloads
     },
   ),

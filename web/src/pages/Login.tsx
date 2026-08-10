@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { t } from "../lib/strings";
 import { useApp } from "../store/app";
-import { Alert, Button, Card, Input, Label } from "../components/ui";
+import { Alert, Button, Card, Input, Label, LangSwitch } from "../components/ui";
 
 export default function Login() {
   const { lang, setUser, setLang } = useApp();
@@ -50,12 +50,9 @@ export default function Login() {
             {t("login", lang)}
           </Button>
         </form>
-        <button
-          className="mt-4 w-full cursor-pointer text-center text-xs text-muted underline"
-          onClick={() => setLang(lang === "mr" ? "en" : "mr")}
-        >
-          {t("languageToggle", lang)}
-        </button>
+        <div className="mt-5">
+          <LangSwitch lang={lang} onChange={setLang} size="lg" />
+        </div>
       </Card>
     </div>
   );
