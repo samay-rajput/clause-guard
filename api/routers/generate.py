@@ -76,8 +76,20 @@ def autodraft(request: Request, req: AutodraftRequest,
     corp = domain.corpus()
     username = user["username"]
 
+    def _strip_bytes(obj):
+        """Binary payloads never ride the JSON job result — exports are
+        fetched from the export endpoints instead."""
+        if isinstance(obj, dict):
+            return {k: _strip_bytes(v) for k, v in obj.items()
+                    if not isinstance(v, (bytes, bytearray))}
+        if isinstance(obj, list):
+            return [_strip_bytes(v) for v in obj
+                    if not isinstance(v, (bytes, bytearray))]
+        return obj
+
     def work(progress):
         res = domain.draft_gr(req.topic, req.lang, corpus=corp, progress=progress)
+        res = _strip_bytes(res)
         if res.get("ok"):
             try:
                 domain.audit_append(username, res["draft"],

@@ -91,14 +91,18 @@ def _run(client):
         print(f"  SKIP scenario-A strict checks — {n_llm_err} pair "
               f"verification(s) hit a live-LLM failure (cold cache)")
     else:
-        check("scenario A -> exactly 1 conflict", len(conflicts) == 1,
-              json.dumps(rev.get("review", {}).get("error", ""))[:200])
+        # round-3 frozen baseline (data/warm_round3.txt): full 23,331-GR corpus,
+        # clean-retrained MuRIL — scenario A verifies 4 conflicts, and the
+        # original anchor GR must be among them
+        codes = {c["meta"].get("gr_code") for c in conflicts}
+        check("scenario A -> 4 verified conflicts", len(conflicts) == 4,
+              (len(conflicts), sorted(codes)))
+        check("anchor GR among the conflicts",
+              "202407191857335408" in codes, sorted(codes))
         if conflicts:
             c = conflicts[0]
             check("conflict carries structured values",
                   c.get("value1") and c.get("value2"), c.keys())
-            check("conflict vs the anchor GR",
-                  c["meta"]["gr_code"] == "202407191857335408", c["meta"])
             check("conflict carries source links", bool(c.get("links")))
     check("audit ts recorded", bool(rev.get("audit_ts")), rev.get("audit_error"))
 

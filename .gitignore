@@ -35,3 +35,4 @@ data/audit_trail_*.jsonl
 data/pairs_regen.log
 .venv_embed/
 
+!data/warm_round3.txt
